@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Map columns{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/admin/tenants/{{ tenant.id }}/import">‹ Import</a>
+<div class="brand">{{ batch.filename }}</div>
+{% endblock %}
+{% block content %}
+<div class="section" style="margin-top:0"><h1>Map the columns</h1><span class="muted">{{ rows | length }} rows{% if truncated %} (the first 5,000; split the file for the rest){% endif %}</span></div>
+
+<form method="post" action="/admin/tenants/{{ tenant.id }}/import/{{ batch.id }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div class="panel">
+    <p class="muted" style="font-size:14px;margin-bottom:12px">For each column in the file, pick what it holds. Columns marked "Skip" are kept in the lead's raw record but not used. A lead needs at least a phone number or an email to be imported.</p>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>Column in file</th><th>Goes to</th><th>First rows</th></tr></thead>
+        <tbody>
+        {% for h in headers %}
+          <tr>
+            <td class="name">{{ h }}</td>
+            <td>
+              <select name="map::{{ h }}" style="min-height:38px;padding:6px 10px;width:230px">
+                {% for key, label in targets %}<option value="{{ key }}" {{ 'selected' if mapping.get(h) == key else '' }}>{{ label }}</option>{% endfor %}
+              </select>
+            </td>
+            <td class="dim" style="font-size:13px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{% for r in sample %}{{ r[h] }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if status_words %}
+  <div class="section"><h2>Their status words</h2></div>
+  <div class="panel">
+    <p class="muted" style="font-size:14px;margin-bottom:12px">The file uses these words in the status column. Pick which CRM status each one means. "Needs review" imports the lead as Contacted and flags it for the client to sort out.</p>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>In the file</th><th>Becomes</th></tr></thead>
+        <tbody>
+        {% for w in status_words %}
+          <tr>
+            <td class="name">{{ w if w else '(blank)' }}</td>
+            <td><select name="status::{{ w }}" style="min-height:38px;padding:6px 10px;width:300px">{% for key, label in status_targets %}<option value="{{ key }}" {{ 'selected' if status_map.get(w) == key else '' }}>{{ label }}</option>{% endfor %}</select></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="warn" style="margin-top:16px">No column is mapped to Status, so every lead will be imported as Contacted and flagged for review.</div>
+  {% endif %}
+
+  <div style="display:flex;gap:10px;margin:16px 0;flex-wrap:wrap">
+    <button class="btn ghost" type="submit" name="action" value="preview">Update preview</button>
+    <button class="btn danger" type="submit" name="action" value="discard" onclick="return confirm('Discard this upload?')">Discard</button>
+  </div>
+
+  {% if dry %}
+  <div class="section"><h2>What will happen</h2></div>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ dry.created }}</div><div class="k">leads will be created</div></div>
+    <div class="stat"><div class="v">{{ dry.merged }}</div><div class="k">already in the CRM; a note is added instead</div></div>
+    <div class="stat {{ 'alert' if dry.rejected else '' }}"><div class="v">{{ dry.rejected }}</div><div class="k">rows skipped</div></div>
+  </div>
+  {% set rejects = dry.outcomes | selectattr('action', 'equalto', 'reject') | list %}
+  {% if rejects %}
+  <div class="table-wrap" style="margin-bottom:16px">
+    <table class="data">
+      <thead><tr><th>Row</th><th>Who</th><th>Why skipped</th></tr></thead>
+      <tbody>{% for o in rejects[:50] %}<tr><td>{{ o.row }}</td><td>{{ o.name }}</td><td>{{ o.reason }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% if rejects | length > 50 %}<p class="muted" style="padding:8px 12px;font-size:13px">And {{ rejects | length - 50 }} more.</p>{% endif %}
+  </div>
+  {% endif %}
+  <div class="table-wrap" style="margin-bottom:16px">
+    <table class="data">
+      <thead><tr><th>Row</th><th>Who</th><th>Action</th><th>Status after import</th></tr></thead>
+      <tbody>{% for o in dry.outcomes[:12] if o.action != 'reject' %}<tr><td>{{ o.row }}</td><td>{{ o.name }}</td><td>{{ 'Create' if o.action == 'create' else 'Merge: ' ~ o.reason }}</td><td><span class="pill s-{{ o.status }}">{{ o.status | status_label }}</span></td></tr>{% endfor %}</tbody>
+    </table>
+    <p class="muted" style="padding:8px 12px;font-size:13px">Showing the first rows; the counts above cover the whole file.</p>
+  </div>
+  <button class="btn hivis" type="submit" name="action" value="commit" {{ 'disabled' if not dry.created and not dry.merged else '' }}>Import {{ dry.created }} leads</button>
+  {% endif %}
+</form>
+{% endblock %}

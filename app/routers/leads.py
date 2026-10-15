@@ -19,14 +19,17 @@ from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
 
-VIEWS = ("needs_action", "open", "all", "new", "contacted", "no_response", "quoted", "won", "lost", "mine")
+VIEWS = ("needs_action", "open", "all", "new", "contacted", "no_response", "quoted", "won", "lost", "mine", "imported")
 
 NEEDS_ACTION_SQL = """
     (
+        NOT (l.flags ? 'needs_review')
+        AND (
         l.status = 'new'
         OR (l.status IN ('contacted', 'no_response') AND COALESCE(l.last_touch_at, l.created_at) < now() - interval '1 day')
         OR (l.status = 'quoted' AND COALESCE(l.quoted_at, l.created_at) < now() - interval '7 days')
         OR (l.next_action_at IS NOT NULL AND l.next_action_at <= now())
+        )
     )
 """
 
@@ -52,6 +55,8 @@ def lead_list(request: Request, principal: Annotated[Principal, Depends(require_
     elif view == "mine":
         where.append("l.assigned_to = %s")
         params.append(principal.user_id)
+    elif view == "imported":
+        where.append("l.flags ? 'needs_review'")
     elif view != "all":
         where.append("l.status = %s")
         params.append(view)
@@ -82,6 +87,7 @@ def lead_list(request: Request, principal: Annotated[Principal, Depends(require_
             SELECT
               count(*) FILTER (WHERE {NEEDS_ACTION_SQL} AND l.status NOT IN ('won','lost')) AS needs_action,
               count(*) FILTER (WHERE l.status NOT IN ('won','lost')) AS open,
+              count(*) FILTER (WHERE l.flags ? 'needs_review') AS imported,
               count(*) FILTER (WHERE l.status = 'won' AND l.won_at > date_trunc('month', now())) AS won_month,
               coalesce(sum(l.deal_value) FILTER (WHERE l.status = 'won' AND l.won_at > date_trunc('month', now())), 0) AS won_value_month
             FROM lead l WHERE l.tenant_id = %s

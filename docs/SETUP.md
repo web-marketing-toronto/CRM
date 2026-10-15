@@ -62,6 +62,12 @@ assignee for new leads.
 - **Anything via Zapier / Shopify Flow**: POST JSON to the intake URL (sample on the client page).
 - **Test**: the `curl` command on the client page creates a lead you can then delete by marking it Lost → Spam.
 
+**Importing a client's existing list**: client page → *Import leads from CSV*. Upload the spreadsheet export,
+check the column mapping and the status-word mapping on the next screen, read the dry run (created / merged /
+skipped and why), then import. Imported leads carry an "Imported, review" tag and sit in the client's
+"To review" tab; they never trigger reminders or texts, and the tag clears the first time the client touches
+them or sets a status.
+
 CallRail, Meta Lead Ads, Google lead forms and the attribution snippet come with the next phase.
 
 ## 6. Optional: Google Maps key for service-area checks

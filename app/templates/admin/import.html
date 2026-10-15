@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Import leads{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/admin/tenants/{{ tenant.id }}">‹ {{ tenant.name }}</a>
+<div class="brand">Import leads</div>
+{% endblock %}
+{% block content %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<div class="section" style="margin-top:0"><h1>Import leads for {{ tenant.name }}</h1></div>
+<form class="panel" method="post" action="/admin/tenants/{{ tenant.id }}/import" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <p class="muted" style="font-size:14px">Upload a CSV exported from a spreadsheet or their old tool. Any column names work: the next screen lets you say which column is the name, phone, email, status and so on, and shows exactly what will be created before anything is saved. Imported leads never trigger reminders or texts; they land in a "To review" list for the client.</p>
+  <div class="field"><label for="file">CSV file <span class="dim">(up to 5 MB, 5,000 rows)</span></label><input id="file" name="file" type="file" accept=".csv,text/csv,text/plain" required style="min-height:46px;padding:9px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--card);width:100%"></div>
+  <button class="btn hivis" type="submit">Upload and map columns</button>
+</form>
+
+{% if history %}
+<div class="section"><h2>Previous imports</h2></div>
+<div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>File</th><th class="num">Rows</th><th>Status</th><th>Result</th><th>When</th></tr></thead>
+    <tbody>
+    {% for b in history %}
+      <tr>
+        <td>{% if b.status == 'uploaded' %}<a href="/admin/tenants/{{ tenant.id }}/import/{{ b.id }}">{{ b.filename }}</a>{% else %}{{ b.filename }}{% endif %}</td>
+        <td class="num">{{ b.row_count }}</td>
+        <td>{% if b.status == 'uploaded' %}<span class="pill s-new">Not finished</span>{% elif b.status == 'committed' %}<span class="pill s-won">Imported</span>{% else %}<span class="pill s-lost">Discarded</span>{% endif %}</td>
+        <td>{% if b.status == 'committed' %}{{ b.result.created }} created, {{ b.result.merged }} merged, {{ b.result.rejected }} skipped{% endif %}</td>
+        <td>{{ b.created_at | relative }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

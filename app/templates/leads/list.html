@@ -5,6 +5,7 @@
   <a href="/leads?view=needs_action" class="{{ 'on' if view == 'needs_action' else '' }}">Needs action{% if counts.needs_action %}<span class="n">{{ counts.needs_action }}</span>{% endif %}</a>
   <a href="/leads?view=open" class="{{ 'on' if view == 'open' else '' }}">Open <span class="dim">{{ counts.open }}</span></a>
   <a href="/leads?view=mine" class="{{ 'on' if view == 'mine' else '' }}">Mine</a>
+  {% if counts.imported or view == 'imported' %}<a href="/leads?view=imported" class="{{ 'on' if view == 'imported' else '' }}">To review <span class="dim">{{ counts.imported }}</span></a>{% endif %}
   <a href="/leads?view=quoted" class="{{ 'on' if view == 'quoted' else '' }}">Quoted</a>
   <a href="/leads?view=won" class="{{ 'on' if view == 'won' else '' }}">Won</a>
   <a href="/leads?view=lost" class="{{ 'on' if view == 'lost' else '' }}">Lost</a>
@@ -31,6 +32,7 @@
       <span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span>
       {% if l.needs_action and l.status != 'new' %}<span class="pill overdue">Follow up</span>{% endif %}
       <span class="chip {{ l.platform }}">{{ l.platform | platform_label }}</span>
+      {% if l.flags.needs_review %}<span class="chip">Imported, review</span>{% endif %}
       {% if l.flags.missed_call %}<span class="chip flag">Missed call</span>{% endif %}
       {% if l.flags.possibly_out_of_area or l.area_status == 'out' %}<span class="chip flag">Out of area?</span>{% endif %}
       {% if l.status == 'won' and l.deal_value %}<span class="chip">{{ l.deal_value | money }}</span>{% endif %}
@@ -44,6 +46,9 @@
   {% if view == 'needs_action' %}
     <strong>Nothing waiting on you</strong>
     Every open lead has been followed up. New ones will show here the moment they arrive.
+  {% elif view == 'imported' %}
+    <strong>All imported leads reviewed</strong>
+    Every lead from the import has been looked at. They now show in the normal views.
   {% elif q %}
     <strong>No leads match "{{ q }}"</strong>
     Try a last name, part of a phone number, or a street.

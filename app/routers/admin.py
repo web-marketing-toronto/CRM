@@ -7,7 +7,7 @@ import re
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from psycopg.types.json import Jsonb
 
@@ -18,6 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
+from app.services import importer
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -264,3 +265,99 @@ def user_toggle(user_id: UUID, principal: Annotated[Principal, Depends(require_a
             conn.execute("UPDATE session SET revoked_at = now() WHERE user_id = %s AND revoked_at IS NULL", (user_id,))
         auth_service.audit(conn, action="user_active_toggled", user_id=principal.user_id, tenant_id=user["tenant_id"], target_type="user", target_id=str(user_id), detail={"is_active": user["is_active"]})
     return RedirectResponse(f"/admin/tenants/{user['tenant_id']}", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# CSV import
+# ---------------------------------------------------------------------------
+
+def _batch_ctx(tenant_id: UUID, batch_id: UUID, *, mapping: dict | None = None, status_map: dict | None = None, dry: importer.RunResult | None = None) -> dict:
+    with db(None, "agency_admin") as conn:
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (tenant_id,)).fetchone()
+        batch = conn.execute("SELECT * FROM import_batch WHERE id = %s AND tenant_id = %s", (batch_id, tenant_id)).fetchone()
+    if tenant is None or batch is None:
+        raise HTTPException(status_code=404, detail="Import not found")
+    if batch["status"] != "uploaded" or not batch["raw_text"]:
+        raise HTTPException(status_code=404, detail="That import has already been finished")
+    parsed = importer.parse(batch["raw_text"].encode("utf-8"), batch["filename"])
+    mapping = mapping or batch["mapping"] or importer.guess_map(parsed.headers)
+    words = importer.distinct_status_words(parsed.rows, mapping)
+    status_map = status_map or batch["status_map"] or {w: importer.guess_status(w) for w in words}
+    return {
+        "tenant": tenant, "batch": batch, "headers": parsed.headers, "sample": parsed.rows[:5], "rows": parsed.rows,
+        "mapping": mapping, "targets": importer.TARGETS, "status_words": words, "status_map": status_map,
+        "status_targets": [("new", "New"), ("contacted", "Contacted"), ("no_response", "No response"), ("quoted", "Quoted"), ("won", "Won"), ("lost", "Lost"), ("review", "Needs review (Contacted + flag)")],
+        "dry": dry, "truncated": parsed.truncated,
+    }
+
+
+@router.get("/tenants/{tenant_id}/import")
+def import_form(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    with db(None, "agency_admin") as conn:
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (tenant_id,)).fetchone()
+        history = conn.execute(
+            "SELECT id, filename, row_count, status, result, created_at, committed_at FROM import_batch WHERE tenant_id = %s ORDER BY created_at DESC LIMIT 10",
+            (tenant_id,),
+        ).fetchall()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return web.render(request, "admin/import.html", tenant=tenant, history=history, error=None)
+
+
+@router.post("/tenants/{tenant_id}/import", dependencies=[Depends(check_csrf)])
+async def import_upload(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)], file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        parsed = importer.parse(data, file.filename or "leads.csv")
+    except ValueError as exc:
+        with db(None, "agency_admin") as conn:
+            tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (tenant_id,)).fetchone()
+        return web.render(request, "admin/import.html", status_code=400, tenant=tenant, history=[], error=str(exc))
+    with db(None, "agency_admin") as conn:
+        if conn.execute("SELECT 1 FROM tenant WHERE id = %s", (tenant_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        batch = conn.execute(
+            """
+            INSERT INTO import_batch (tenant_id, created_by, filename, raw_text, headers, row_count, mapping)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+            """,
+            (tenant_id, principal.user_id, (file.filename or "leads.csv")[:200], parsed.text, parsed.headers, len(parsed.rows), Jsonb(importer.guess_map(parsed.headers))),
+        ).fetchone()
+    return RedirectResponse(f"/admin/tenants/{tenant_id}/import/{batch['id']}", status_code=303)
+
+
+@router.get("/tenants/{tenant_id}/import/{batch_id}")
+def import_map(request: Request, tenant_id: UUID, batch_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    ctx = _batch_ctx(tenant_id, batch_id)
+    with db(None, "agency_admin") as conn:
+        ctx["dry"] = importer.run(conn, ctx["tenant"], ctx["rows"], ctx["mapping"], ctx["status_map"], batch_id=batch_id, actor_id=principal.user_id, actor_label=principal.label, commit=False)
+    return web.render(request, "admin/import_map.html", **ctx)
+
+
+@router.post("/tenants/{tenant_id}/import/{batch_id}", dependencies=[Depends(check_csrf)])
+async def import_apply(request: Request, tenant_id: UUID, batch_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    form = await request.form()
+    action = str(form.get("action") or "preview")
+    if action == "discard":
+        with db(None, "agency_admin") as conn:
+            conn.execute("UPDATE import_batch SET status = 'discarded', raw_text = NULL WHERE id = %s AND tenant_id = %s", (batch_id, tenant_id))
+        return RedirectResponse(f"/admin/tenants/{tenant_id}/import", status_code=303)
+    ctx = _batch_ctx(tenant_id, batch_id)
+    mapping = {h: (str(form.get(f"map::{h}") or "skip")) for h in ctx["headers"]}
+    mapping = {h: (t if t in importer.TARGET_KEYS else "skip") for h, t in mapping.items()}
+    words = importer.distinct_status_words(ctx["rows"], mapping)
+    status_map = {w: str(form.get(f"status::{w}") or importer.guess_status(w)) for w in words}
+    with db(None, "agency_admin") as conn:
+        conn.execute("UPDATE import_batch SET mapping = %s, status_map = %s WHERE id = %s", (Jsonb(mapping), Jsonb(status_map), batch_id))
+        if action == "commit":
+            result = importer.run(conn, ctx["tenant"], ctx["rows"], mapping, status_map, batch_id=batch_id, actor_id=principal.user_id, actor_label=principal.label, commit=True)
+            conn.execute(
+                "UPDATE import_batch SET status = 'committed', committed_at = now(), raw_text = NULL, result = %s WHERE id = %s",
+                (Jsonb(result.as_dict()), batch_id),
+            )
+            auth_service.audit(conn, action="leads_imported", user_id=principal.user_id, tenant_id=tenant_id, target_type="import_batch", target_id=str(batch_id), detail=result.as_dict())
+            notice = f"Imported {result.created} leads ({result.merged} merged into existing leads, {result.rejected} skipped)."
+            return RedirectResponse(f"/admin/tenants/{tenant_id}?notice={notice.replace(' ', '+')}", status_code=303)
+        dry = importer.run(conn, ctx["tenant"], ctx["rows"], mapping, status_map, batch_id=batch_id, actor_id=principal.user_id, actor_label=principal.label, commit=False)
+    ctx = _batch_ctx(tenant_id, batch_id, mapping=mapping, status_map=status_map, dry=dry)
+    return web.render(request, "admin/import_map.html", **ctx)

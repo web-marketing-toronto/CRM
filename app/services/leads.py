@@ -288,7 +288,7 @@ def log_touch(
     tenant_id = lead["tenant_id"]
     now = datetime.now(UTC)
     log_activity(conn, tenant_id, lead["id"], type_, actor_id=actor_id, actor_label=actor_label, body=note)
-    sets = ["last_touch_at = %s", "next_action_at = NULL"]
+    sets = ["last_touch_at = %s", "next_action_at = NULL", "flags = flags - 'needs_review'"]
     params: list[Any] = [now]
     if lead["first_contact_at"] is None:
         sets.append("first_contact_at = %s")
@@ -322,7 +322,7 @@ def change_status(
     if new_status == LeadStatus.LOST and lost_reason is None:
         raise LeadError("Pick a reason to mark a lead Lost")
     now = datetime.now(UTC)
-    sets = ["status = %s", "next_action_at = NULL"]
+    sets = ["status = %s", "next_action_at = NULL", "flags = flags - 'needs_review'"]
     params: list[Any] = [new_status.value]
     if new_status == LeadStatus.WON:
         sets += ["deal_value = %s", "won_at = %s", "lost_reason = NULL", "lost_at = NULL"]
