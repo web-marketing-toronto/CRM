@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ tenant.name }}{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/admin">‹ Clients</a>
+<div class="brand">{{ tenant.name }}</div>
+{% endblock %}
+{% block content %}
+{% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+{% if new_user_password %}
+<div class="warn">Temporary password: <code style="font-size:18px;letter-spacing:0.06em;user-select:all">{{ new_user_password }}</code>. They'll be asked to choose their own at first sign-in.</div>
+{% endif %}
+
+<div class="section" style="margin-top:0">
+  <h1>{{ tenant.name }}</h1>
+  <form class="inline-form" method="post" action="/switch-tenant"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tenant_id" value="{{ tenant.id }}"><button class="btn" type="submit">Open their leads</button></form>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr;gap:20px">
+<div>
+  <div class="section"><h2>Lead intake</h2></div>
+  <div class="panel">
+    <p class="muted" style="font-size:14px">Every form, Zapier zap and ad platform for this client posts to this URL. Keep it private; anyone with it can create leads.</p>
+    <dl class="kv">
+      <dt>Intake URL</dt><dd><code style="user-select:all">{{ intake_url }}</code></dd>
+      <dt>Short name</dt><dd>{{ tenant.slug }}</dd>
+    </dl>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">How to connect a form</summary>
+      <p style="margin-top:10px;font-size:14px"><strong>WordPress (Elementor Pro, WPForms, Gravity Forms):</strong> in the form's actions, add a Webhook pointing at the URL above. Field names are matched automatically (name, email, phone, address, message); anything unusual goes in the field map below.</p>
+      <p style="font-size:14px"><strong>Zapier / Shopify Flow / anything else:</strong> send a POST with JSON like this:</p>
+<pre class="snippet">{
+  "name": "Mike Reynolds",
+  "phone": "705 555 0142",
+  "email": "mike@example.com",
+  "job_address": "12 Birch Lane, Bracebridge",
+  "job_type": "Roof replacement",
+  "message": "Please call about a quote",
+  "gclid": "", "fbclid": "", "utm_source": "", "utm_campaign": "",
+  "landing_page": "https://..."
+}</pre>
+      <p style="font-size:14px"><strong>Test it from a terminal:</strong></p>
+<pre class="snippet">curl -X POST '{{ intake_url }}' -H 'Content-Type: application/json' \
+  -d '{"name":"Test Lead","phone":"705 555 0100","job_type":"Test","message":"Delete me"}'</pre>
+    </details>
+    <form class="inline-form" method="post" action="/admin/tenants/{{ tenant.id }}/rotate-key" onsubmit="return confirm('Generate a new intake key? Every form posting to the old URL stops working until you update it.')" style="display:block;margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Generate a new key</button>
+    </form>
+  </div>
+
+  <div class="section"><h2>Logins</h2></div>
+  <div class="panel">
+    {% for u in users %}
+    <div class="user-row">
+      <div class="who"><strong>{{ u.name }} <span class="dim" style="font-weight:500">{{ u.role }}</span>{% if not u.is_active %} <span class="pill s-lost">disabled</span>{% endif %}</strong><span>{{ u.email }}{% if u.mobile_e164 %} · {{ u.mobile_e164 | phone }}{% endif %} · {% if u.totp_enabled %}authenticator on{% else %}no authenticator{% endif %}{% if u.last_login_at %} · last sign-in {{ u.last_login_at | relative }}{% else %} · never signed in{% endif %}</span></div>
+      <div class="ops">
+        <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-password" onsubmit="return confirm('Set a temporary password for {{ u.name }}? Their current sessions end.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Reset password</button></form>
+        {% if u.totp_enabled %}<form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-mfa" onsubmit="return confirm('Clear the authenticator for {{ u.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Clear authenticator</button></form>{% endif %}
+        <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/toggle-active"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">{{ 'Enable' if not u.is_active else 'Disable' }}</button></form>
+      </div>
+    </div>
+    {% else %}
+    <p class="muted">No logins yet. Add the owner first; they become the default assignee.</p>
+    {% endfor %}
+    <form method="post" action="/admin/tenants/{{ tenant.id }}/users" style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h3 style="margin-bottom:10px">Add a login</h3>
+      <div class="grid-2">
+        <div class="field"><label for="u_name">Name</label><input id="u_name" name="name" type="text" required></div>
+        <div class="field"><label for="u_email">Email</label><input id="u_email" name="email" type="email" required></div>
+        <div class="field"><label for="u_mobile">Mobile (for text alerts)</label><input id="u_mobile" name="mobile" type="tel"></div>
+        <div class="field"><label for="u_role">Role</label><select id="u_role" name="role"><option value="owner">Owner (settings and all leads)</option><option value="member" selected>Member (works leads)</option></select></div>
+      </div>
+      <button class="btn" type="submit">Create login</button>
+    </form>
+  </div>
+</div>
+
+<div>
+  <div class="section"><h2>Settings</h2></div>
+  <form class="panel" method="post" action="/admin/tenants/{{ tenant.id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="grid-2">
+      <div class="field"><label for="name">Client name</label><input id="name" name="name" type="text" value="{{ tenant.name }}" required></div>
+      <div class="field"><label for="timezone">Time zone</label><input id="timezone" name="timezone" type="text" value="{{ tenant.timezone }}"></div>
+      <div class="field"><label for="default_assignee_id">New leads go to</label>
+        <select id="default_assignee_id" name="default_assignee_id"><option value="">Nobody (unassigned)</option>{% for u in users if u.is_active %}<option value="{{ u.id }}" {{ 'selected' if tenant.default_assignee_id == u.id else '' }}>{{ u.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="twilio_number">Twilio number (phase 2)</label><input id="twilio_number" name="twilio_number" type="tel" value="{{ tenant.twilio_number or '' }}"></div>
+    </div>
+    <div class="field"><label for="job_types">Job types <span class="dim">(one per line; shows as a dropdown)</span></label><textarea id="job_types" name="job_types" style="min-height:90px">{{ job_types_text }}</textarea></div>
+    <div class="field"><label for="service_area">Service area <span class="dim">(JSON)</span></label>
+      <div class="help">Either a circle: <code>{"center": {"lat": 45.04, "lng": -79.31}, "radius_km": 60, "buffer_km": 25}</code> or a GeoJSON polygon under <code>"polygon"</code>, with optional <code>"fsas": ["P1L","P1P"]</code> as a postal-code fallback. Leave <code>{}</code> to skip the check.</div>
+      <textarea id="service_area" name="service_area" class="code">{{ service_area_json }}</textarea></div>
+    <div class="field"><label for="field_map">Field map <span class="dim">(JSON, incoming field → standard field)</span></label>
+      <div class="help">Only needed when a form uses odd names, e.g. <code>{"your-cell": "phone", "where": "job_address"}</code>. Standard fields: contact_name, first_name, last_name, phone, email, company, contact_address, job_address, city, province, postal_code, job_type, message, form_name.</div>
+      <textarea id="field_map" name="field_map" class="code" style="min-height:90px">{{ field_map_json }}</textarea></div>
+    <div class="field"><label for="business_hours">Business hours <span class="dim">(JSON; reminders wait for these)</span></label><input id="business_hours" name="business_hours" type="text" value='{{ business_hours_json }}'></div>
+    <label class="check"><input type="checkbox" name="is_active" {{ 'checked' if tenant.is_active else '' }}> Active (intake accepts leads, reminders run)</label>
+    <button class="btn" type="submit" style="margin-top:8px">Save settings</button>
+  </form>
+
+  <div class="section"><h2>Recent leads</h2></div>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>Ref</th><th>Name</th><th>Status</th><th>Source</th><th>Received</th></tr></thead>
+      <tbody>
+      {% for l in recent %}
+        <tr><td>{{ l.ref_code }}</td><td class="name">{{ l.contact_name or '—' }}</td><td><span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span></td><td>{{ l.platform | platform_label }} · {{ l.channel | channel_label }}</td><td>{{ l.created_at | relative }}</td></tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No leads yet. Send a test with the curl command above.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</div>
+{% endblock %}

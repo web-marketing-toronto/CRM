@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Sign in{% endblock %} · {{ settings.agency_name }} CRM</title>
+  <meta name="theme-color" content="#16202b">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@87.5..100,400..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="auth">
+  <div class="card">
+    <div class="mark"><span class="sq"></span><strong>{{ settings.agency_name }} CRM</strong></div>
+    {% block content %}{% endblock %}
+  </div>
+</main>
+</body>
+</html>

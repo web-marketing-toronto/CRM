@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Leads{% endblock %} · {{ principal.tenant.name if principal and principal.tenant else settings.agency_name }}</title>
+  <meta name="theme-color" content="#16202b">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@87.5..100,400..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+{% block topbar %}
+<header class="topbar">
+  {% block topbar_left %}
+  <div class="brand">
+    {% if principal and principal.tenant %}{{ principal.tenant.name }}{% if principal.is_agency %}<small>viewing as agency</small>{% endif %}{% else %}{{ settings.agency_name }}{% endif %}
+  </div>
+  {% endblock %}
+  <nav>
+    {% if principal %}
+      {% if principal.tenant %}<a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}">Leads</a>{% endif %}
+      {% if principal.is_agency %}<a href="/admin" class="{{ 'current' if request.url.path.startswith('/admin') else '' }}">Clients</a>{% endif %}
+      <a href="/account" class="{{ 'current' if request.url.path.startswith('/account') else '' }}" aria-label="Account">{{ principal.user.name.split(' ')[0] }}</a>
+    {% endif %}
+  </nav>
+</header>
+{% endblock %}
+<main class="page {% block page_class %}{% endblock %}">
+{% block content %}{% endblock %}
+</main>
+<script>
+  document.body.addEventListener('htmx:responseError', function (e) {
+    if (e.detail.xhr.status === 401 || e.detail.xhr.status === 403) { window.location.reload(); }
+  });
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/static/sw.js').catch(function () {}); }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

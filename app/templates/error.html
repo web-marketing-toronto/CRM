@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ status }}{% endblock %}
+{% block content %}
+<div class="empty">
+  <strong>{% if status == 404 %}Not found{% elif status == 403 %}Not allowed{% else %}Something went wrong{% endif %}</strong>
+  {{ detail }}
+  <p style="margin-top:16px"><a class="btn ghost" href="/">Back to start</a></p>
+</div>
+{% endblock %}

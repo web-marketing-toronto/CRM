@@ -1,0 +1,13 @@
+{
+  "name": "Leads",
+  "short_name": "Leads",
+  "start_url": "/leads",
+  "display": "standalone",
+  "background_color": "#eef0ec",
+  "theme_color": "#16202b",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

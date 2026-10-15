@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Leads{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Lead filters">
+  <a href="/leads?view=needs_action" class="{{ 'on' if view == 'needs_action' else '' }}">Needs action{% if counts.needs_action %}<span class="n">{{ counts.needs_action }}</span>{% endif %}</a>
+  <a href="/leads?view=open" class="{{ 'on' if view == 'open' else '' }}">Open <span class="dim">{{ counts.open }}</span></a>
+  <a href="/leads?view=mine" class="{{ 'on' if view == 'mine' else '' }}">Mine</a>
+  <a href="/leads?view=quoted" class="{{ 'on' if view == 'quoted' else '' }}">Quoted</a>
+  <a href="/leads?view=won" class="{{ 'on' if view == 'won' else '' }}">Won</a>
+  <a href="/leads?view=lost" class="{{ 'on' if view == 'lost' else '' }}">Lost</a>
+  <a href="/leads?view=all" class="{{ 'on' if view == 'all' else '' }}">All</a>
+</nav>
+<form class="search" method="get" action="/leads">
+  <input type="hidden" name="view" value="{{ view }}">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search name, phone, address" aria-label="Search leads">
+  {% if q %}<a class="btn ghost" href="/leads?view={{ view }}">Clear</a>{% endif %}
+</form>
+
+{% if leads %}
+<div class="rows">
+  {% for l in leads %}
+  <a class="lead-row s-{{ l.status }} {{ 'overdue' if l.needs_action and l.status != 'new' else '' }}" href="/leads/{{ l.id }}">
+    <div class="name">{{ l.contact_name or l.company or (l.phone_e164 | phone) or 'Unknown caller' }}</div>
+    <div class="when">{{ l.created_at | relative }}</div>
+    <div class="what">
+      {% if l.job_type %}{{ l.job_type }}{% endif %}
+      {% if l.job_address %}{% set parts = l.job_address.split(',') %}{% set place = (parts[1] if parts | length > 1 else parts[0]) | trim %}{% if l.job_type %} in {% endif %}{{ place }}{% endif %}
+      {% if not l.job_type and not l.job_address %}{{ l.channel | channel_label }}{% endif %}
+    </div>
+    <div class="meta">
+      <span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span>
+      {% if l.needs_action and l.status != 'new' %}<span class="pill overdue">Follow up</span>{% endif %}
+      <span class="chip {{ l.platform }}">{{ l.platform | platform_label }}</span>
+      {% if l.flags.missed_call %}<span class="chip flag">Missed call</span>{% endif %}
+      {% if l.flags.possibly_out_of_area or l.area_status == 'out' %}<span class="chip flag">Out of area?</span>{% endif %}
+      {% if l.status == 'won' and l.deal_value %}<span class="chip">{{ l.deal_value | money }}</span>{% endif %}
+      {% if l.assignee_name %}<span class="dim" style="font-size:12px">{{ l.assignee_name.split(' ')[0] }}</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  {% if view == 'needs_action' %}
+    <strong>Nothing waiting on you</strong>
+    Every open lead has been followed up. New ones will show here the moment they arrive.
+  {% elif q %}
+    <strong>No leads match "{{ q }}"</strong>
+    Try a last name, part of a phone number, or a street.
+  {% else %}
+    <strong>No leads here yet</strong>
+    Leads from your website, ads and phone line land here automatically. You can also add one by hand.
+  {% endif %}
+</div>
+{% endif %}
+
+<a class="fab" href="/leads/new"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add lead</a>
+{% endblock %}

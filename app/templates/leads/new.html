@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Add lead{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/leads">‹ Leads</a>
+<div class="brand">Add a lead</div>
+{% endblock %}
+{% block content %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<form method="post" action="/leads/new" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="field"><label for="contact_name">Name</label><input id="contact_name" name="contact_name" type="text" value="{{ form.contact_name or '' }}" autofocus></div>
+  <div class="grid-2">
+    <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="tel" value="{{ form.phone or '' }}" inputmode="tel"></div>
+    <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" value="{{ form.email or '' }}"></div>
+  </div>
+  <div class="field"><label for="job_type">What they need</label>
+    {% if job_types %}
+    <select id="job_type" name="job_type"><option value="">Pick one</option>{% for t in job_types %}<option {{ 'selected' if form.job_type == t else '' }}>{{ t }}</option>{% endfor %}</select>
+    {% else %}
+    <input id="job_type" name="job_type" type="text" value="{{ form.job_type or '' }}">
+    {% endif %}
+  </div>
+  <div class="field"><label for="job_address">Job address</label><input id="job_address" name="job_address" type="text" value="{{ form.job_address or '' }}" placeholder="12 Birch Lane, Bracebridge"></div>
+  <div class="field"><label for="company">Company <span class="dim">(if any)</span></label><input id="company" name="company" type="text" value="{{ form.company or '' }}"></div>
+  <div class="field"><label for="platform">How did they find you?</label>
+    <select id="platform" name="platform">
+      {% for p in Platform %}<option value="{{ p.value }}" {{ 'selected' if (form.platform or 'unknown') == p.value else '' }}>{{ PLATFORM_LABELS[p] }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field"><label for="message">Notes</label><textarea id="message" name="message">{{ form.message or '' }}</textarea></div>
+  <button class="btn hivis block" type="submit">Save lead</button>
+</form>
+{% endblock %}

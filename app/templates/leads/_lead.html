@@ -1,0 +1,153 @@
+{# The lead "ticket": re-rendered whole after every action. #}
+<div id="lead" class="ticket" data-lead="{{ lead.id }}">
+  {% if error %}<div class="error-box" style="margin:0">{{ error }}</div>{% endif %}
+
+  <div class="head">
+    <div>
+      <div class="ref">{{ lead.ref_code }}{% if lead.previous_lead_id %} · returning{% endif %}</div>
+      <h1>{{ lead.contact_name or lead.company or (lead.phone_e164 | phone) or 'Unknown caller' }}</h1>
+      {% if lead.company and lead.contact_name %}<div class="muted">{{ lead.company }}</div>{% endif %}
+      {% if lead.job_type %}<div class="job">{{ lead.job_type }}</div>{% endif %}
+      {% if lead.job_address %}
+        <div class="addr"><a href="https://www.google.com/maps/search/?api=1&query={{ lead.job_address | urlencode }}" target="_blank" rel="noopener">{{ lead.job_address }}</a></div>
+      {% elif lead.contact_address %}
+        <div class="addr">{{ lead.contact_address }}</div>
+      {% endif %}
+      <div class="meta">
+        <span class="chip {{ lead.platform }}">{{ lead.platform | platform_label }}</span>
+        <span class="chip">{{ lead.channel | channel_label }}</span>
+        {% if lead.campaign_name %}<span class="chip">{{ lead.campaign_name }}</span>{% endif %}
+        {% if lead.flags.missed_call %}<span class="chip flag">Missed call</span>{% endif %}
+        {% if lead.area_status == 'out' %}<span class="chip flag">Outside service area</span>
+        {% elif lead.flags.possibly_out_of_area %}<span class="chip flag">Possibly out of area</span>
+        {% elif lead.area_status == 'near' %}<span class="chip">Near edge of area</span>{% endif %}
+        <span class="dim" style="font-size:13px">{{ lead.created_at | local(tz) }}</span>
+      </div>
+    </div>
+    <div style="text-align:right">
+      <span class="pill s-{{ lead.status }}" style="font-size:14px;padding:5px 11px">{{ lead.status | status_label }}</span>
+    </div>
+  </div>
+
+  {% if lead.message %}
+  <div class="message"><div class="label">Their message</div>{{ lead.message }}</div>
+  {% endif %}
+
+  <div>
+    <div class="actions">
+      {% if lead.phone_e164 %}
+      <a class="act" href="tel:{{ lead.phone_e164 }}" data-touch="call">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.7a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.7a2 2 0 0 1 1.7 2z"/></svg>
+        Call <small>{{ lead.phone_e164 | phone }}</small>
+      </a>
+      <a class="act" href="sms:{{ lead.phone_e164 }}" data-touch="text">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Text <small>opens Messages</small>
+      </a>
+      {% else %}
+      <span class="act" aria-disabled="true">Call <small>no phone number</small></span>
+      <span class="act" aria-disabled="true">Text <small>no phone number</small></span>
+      {% endif %}
+      {% if lead.email %}
+      <a class="act" href="mailto:{{ lead.email }}" data-touch="email">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+        Email <small>{{ lead.email }}</small>
+      </a>
+      {% else %}
+      <span class="act" aria-disabled="true">Email <small>no email</small></span>
+      {% endif %}
+    </div>
+    <div class="hint">Tapping logs the attempt and moves a new lead to Contacted.{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
+  </div>
+
+  <div class="status">
+    {% if lead.status == 'won' %}
+      <div class="closed-note won">Won{% if lead.deal_value %} · {{ lead.deal_value | money }}{% endif %}{% if lead.won_at %} · {{ lead.won_at | local(tz, '%b %-d') }}{% endif %}</div>
+    {% elif lead.status == 'lost' %}
+      <div class="closed-note lost">Lost · {{ lead.lost_reason | lost_label }}{% if lead.lost_at %} · {{ lead.lost_at | local(tz, '%b %-d') }}{% endif %}</div>
+    {% endif %}
+    <div class="status-row">
+      {% for s in ['contacted', 'no_response', 'quoted'] %}
+      <form method="post" action="/leads/{{ lead.id }}/status" hx-post="/leads/{{ lead.id }}/status" hx-target="#lead" hx-swap="outerHTML" style="display:contents">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="status" value="{{ s }}">
+        <button class="sbtn {{ 'on' if lead.status == s else '' }}" type="submit" {{ 'disabled' if lead.status == s else '' }}>{{ s | status_label }}</button>
+      </form>
+      {% endfor %}
+      <button class="sbtn won {{ 'on' if lead.status == 'won' else '' }}" type="button" data-reveal="won" {{ 'disabled' if lead.status == 'won' else '' }}>Won</button>
+      <button class="sbtn lost {{ 'on' if lead.status == 'lost' else '' }}" type="button" data-reveal="lost" {{ 'disabled' if lead.status == 'lost' else '' }}>Lost</button>
+    </div>
+    <form class="reveal" id="reveal-won" method="post" action="/leads/{{ lead.id }}/status" hx-post="/leads/{{ lead.id }}/status" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="status" value="won">
+      <label for="deal_value" style="font-weight:600">Job value</label>
+      <input id="deal_value" name="deal_value" type="text" inputmode="decimal" placeholder="8500" required>
+      <button class="btn hivis" type="submit">Mark won</button>
+    </form>
+    <form class="reveal" id="reveal-lost" method="post" action="/leads/{{ lead.id }}/status" hx-post="/leads/{{ lead.id }}/status" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="status" value="lost">
+      <label for="lost_reason" style="font-weight:600">Why</label>
+      <select id="lost_reason" name="lost_reason" required>
+        <option value="">Pick a reason</option>
+        {% for r in LostReason %}<option value="{{ r.value }}">{{ LOST_REASON_LABELS[r] }}</option>{% endfor %}
+      </select>
+      <button class="btn" type="submit">Mark lost</button>
+    </form>
+  </div>
+
+  <div>
+    <form class="note-form" method="post" action="/leads/{{ lead.id }}/note" hx-post="/leads/{{ lead.id }}/note" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <textarea name="body" placeholder="Add a note: left voicemail, wants a quote by Friday…" required></textarea>
+      <button class="btn ghost" type="submit">Add note</button>
+    </form>
+    {% if users | length > 1 or principal.is_agency %}
+    <form method="post" action="/leads/{{ lead.id }}/assign" hx-post="/leads/{{ lead.id }}/assign" hx-target="#lead" hx-swap="outerHTML" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="assign" class="muted" style="font-size:14px;white-space:nowrap">Assigned to</label>
+      <select id="assign" name="user_id" onchange="this.form.requestSubmit()" style="min-height:40px;padding:6px 10px">
+        <option value="" {{ 'selected' if not lead.assigned_to else '' }}>Nobody</option>
+        {% for u in users %}<option value="{{ u.id }}" {{ 'selected' if lead.assigned_to == u.id else '' }}>{{ u.name }}</option>{% endfor %}
+      </select>
+    </form>
+    {% endif %}
+  </div>
+
+  <div>
+    <h3 style="margin-bottom:10px">What's happened</h3>
+    <ul class="timeline">
+      {% for a in activity %}
+      <li>
+        <span class="dot {{ 'touch' if a.type in ('call_attempt','text_sent','email_sent') else 'lead' if a.type in ('created','duplicate_submission') else 'won' if a.type == 'status_change' and a.detail.to == 'won' else 'lost' if a.type == 'status_change' and a.detail.to == 'lost' else 'reply' if a.type == 'lead_replied' else '' }}"></span>
+        <div>
+          <div class="what">
+            {% if a.type == 'status_change' %}{{ a.detail.to | status_label }}{% if a.detail.deal_value %} · ${{ a.detail.deal_value }}{% endif %}{% if a.detail.lost_reason %} · {{ a.detail.lost_reason | lost_label }}{% endif %}{% if a.detail.auto %} <span class="who">(automatic)</span>{% endif %}
+            {% elif a.type == 'created' %}Lead received <span class="who">via {{ a.detail.channel | channel_label }}{% if a.detail.platform and a.detail.platform != 'unknown' %}, {{ a.detail.platform | platform_label }}{% endif %}</span>
+            {% elif a.type == 'assignment' %}Assigned <span class="who">{% if a.detail.how == 'default' %}automatically{% else %}by {{ a.actor_label }}{% endif %}</span>
+            {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
+          </div>
+          {% if a.body and a.type != 'created' %}<div class="body">{{ a.body }}</div>{% endif %}
+        </div>
+        <div class="when">{{ a.occurred_at | relative }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  {% if source and (source.utm_campaign or source.gclid or source.meta_lead_id or source.landing_page or source.callrail_call_id) %}
+  <details>
+    <summary class="muted" style="cursor:pointer;font-size:14px">Where this lead came from</summary>
+    <dl class="kv" style="margin-top:10px">
+      {% if source.landing_page %}<dt>Page</dt><dd>{{ source.landing_page }}</dd>{% endif %}
+      {% if source.utm_source %}<dt>Source</dt><dd>{{ source.utm_source }}{% if source.utm_medium %} / {{ source.utm_medium }}{% endif %}</dd>{% endif %}
+      {% if source.utm_campaign %}<dt>Campaign</dt><dd>{{ source.utm_campaign }}</dd>{% endif %}
+      {% if source.gclid %}<dt>Google click</dt><dd>yes</dd>{% endif %}
+      {% if source.meta_lead_id %}<dt>Meta lead</dt><dd>{{ source.meta_lead_id }}</dd>{% endif %}
+      {% if source.callrail_call_id %}<dt>CallRail</dt><dd>{{ source.callrail_call_id }}</dd>{% endif %}
+      {% if source.form_name %}<dt>Form</dt><dd>{{ source.form_name }}</dd>{% endif %}
+      {% if source.referrer %}<dt>Referrer</dt><dd>{{ source.referrer }}</dd>{% endif %}
+    </dl>
+  </details>
+  {% endif %}
+</div>

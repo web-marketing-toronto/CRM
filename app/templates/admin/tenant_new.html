@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Add client{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/admin">‹ Clients</a>
+<div class="brand">Add a client</div>
+{% endblock %}
+{% block content %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<form class="panel" method="post" action="/admin/tenants/new">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="field"><label for="name">Client name</label><input id="name" name="name" type="text" value="{{ form.name or '' }}" required autofocus placeholder="North Ridge Roofing"></div>
+  <div class="field"><label for="slug">Short name <span class="dim">(used in their intake URL; letters, numbers, dashes)</span></label><input id="slug" name="slug" type="text" value="{{ form.slug or '' }}" placeholder="north-ridge"></div>
+  <div class="field"><label for="job_types">Job types <span class="dim">(one per line)</span></label><textarea id="job_types" name="job_types" placeholder="Roof replacement&#10;Repair&#10;Eavestrough">{{ form.job_types or '' }}</textarea></div>
+  <div class="field"><label for="timezone">Time zone</label><input id="timezone" name="timezone" type="text" value="America/Toronto"></div>
+  <button class="btn hivis" type="submit">Create client</button>
+</form>
+{% endblock %}

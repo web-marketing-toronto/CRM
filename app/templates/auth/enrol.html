@@ -1,0 +1,23 @@
+{% extends "auth/_base.html" %}
+{% block title %}Set up your authenticator{% endblock %}
+{% block content %}
+<h1>Protect your account</h1>
+<p class="sub">{% if required %}Your role requires a second step at sign-in.{% else %}Add a second step at sign-in so a stolen password isn't enough.{% endif %} Takes about a minute.</p>
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<ol style="padding-left:20px;margin:0 0 12px;color:var(--ink-2);font-size:15px">
+  <li>Install <strong>Google Authenticator</strong> or <strong>Microsoft Authenticator</strong> on your phone if you don't have one.</li>
+  <li>In the app, add an account by scanning this code.</li>
+  <li>Type the 6-digit code it shows.</li>
+</ol>
+<div class="qr">{{ qr_svg | safe }}</div>
+<p class="dim" style="font-size:13px;margin-bottom:4px">Can't scan? Enter this key by hand:</p>
+<code class="secret">{{ secret }}</code>
+<form method="post" action="/login/setup-authenticator" style="margin-top:16px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="field"><input class="otp" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456" required aria-label="6-digit code"></div>
+  <button class="btn hivis block" type="submit">Turn on</button>
+</form>
+{% if not required %}
+<form method="post" action="/login/skip-authenticator" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost block" type="submit">Not now</button></form>
+{% endif %}
+{% endblock %}

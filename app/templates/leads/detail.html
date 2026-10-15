@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.contact_name or lead.ref_code }}{% endblock %}
+{% block topbar_left %}
+<a class="back" href="/leads">‹ Leads</a>
+<div class="brand">{{ principal.tenant.name }}</div>
+{% endblock %}
+{% block content %}
+{% include "leads/_lead.html" %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var csrf = document.querySelector('meta[name="csrf-token"]').content;
+  // Call / Text / Email: let the phone open the dialer or Messages, and log the attempt in the background.
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a.act[data-touch]');
+    if (!a) return;
+    var card = a.closest('#lead');
+    var url = '/leads/' + card.dataset.lead + '/touch';
+    var body = new URLSearchParams({ type: a.dataset.touch, csrf_token: csrf });
+    fetch(url, { method: 'POST', headers: { 'HX-Request': 'true', 'X-CSRF-Token': csrf }, body: body })
+      .then(function (r) { return r.text(); })
+      .then(function (html) { card.outerHTML = html; if (window.htmx) htmx.process(document.getElementById('lead')); })
+      .catch(function () {});
+  });
+  // Won / Lost reveal their one extra field before submitting.
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-reveal]');
+    if (!b) return;
+    var which = b.dataset.reveal;
+    document.querySelectorAll('.reveal').forEach(function (f) { f.classList.toggle('open', f.id === 'reveal-' + which && !f.classList.contains('open')); });
+    var open = document.getElementById('reveal-' + which);
+    if (open.classList.contains('open')) { var i = open.querySelector('input, select'); if (i) i.focus(); }
+  });
+})();
+</script>
+{% endblock %}

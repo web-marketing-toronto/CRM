@@ -1,0 +1,14 @@
+{% extends "auth/_base.html" %}
+{% block title %}Verification code{% endblock %}
+{% block content %}
+<h1>Enter your code</h1>
+<p class="sub">Open your authenticator app and type the 6-digit code for {{ settings.agency_name }} CRM.</p>
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<form method="post" action="/login/mfa">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="field"><input class="otp" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 \-]*" placeholder="123 456" required autofocus aria-label="6-digit code"></div>
+  <button class="btn hivis block" type="submit">Verify</button>
+</form>
+<p class="dim" style="margin-top:16px;font-size:13px">Lost your phone? A backup code works here too.</p>
+<form method="post" action="/logout" style="margin-top:8px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Sign out</button></form>
+{% endblock %}

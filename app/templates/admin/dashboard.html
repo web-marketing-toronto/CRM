@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Clients{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block content %}
+<div class="section" style="margin-top:0">
+  <h1>Clients</h1>
+  <a class="btn" href="/admin/tenants/new">Add client</a>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="v">{{ totals.leads_30d }}</div><div class="k">leads in the last 30 days</div></div>
+  <div class="stat"><div class="v">{{ totals.won_30d }}</div><div class="k">won in the last 30 days</div></div>
+  <div class="stat"><div class="v">{{ totals.won_value_30d | money }}</div><div class="k">value won, last 30 days</div></div>
+  <div class="stat {{ 'alert' if totals.stale_new else '' }}"><div class="v">{{ totals.stale_new }}</div><div class="k">new leads untouched over 24 h</div></div>
+</div>
+
+{% if tenants %}
+<div class="table-wrap">
+<table class="data">
+  <thead>
+    <tr>
+      <th>Client</th>
+      <th class="num">New</th>
+      <th class="num">Open</th>
+      <th class="num">Leads, 30 d</th>
+      <th class="num">Won, 30 d</th>
+      <th class="num">Value, 30 d</th>
+      <th>Last lead</th>
+      <th class="num">Logins</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tenants %}
+    <tr>
+      <td><a class="name" href="/admin/tenants/{{ t.id }}">{{ t.name }}</a>{% if not t.is_active %} <span class="pill s-lost">paused</span>{% endif %}<br><span class="dim" style="font-size:12px">{{ t.slug }}</span></td>
+      <td class="num">{% if t.new_leads %}<span class="pill s-new">{{ t.new_leads }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{{ t.open_leads }}</td>
+      <td class="num">{{ t.leads_30d }}</td>
+      <td class="num">{{ t.won_30d }}</td>
+      <td class="num">{{ t.won_value_30d | money }}</td>
+      <td>{{ t.last_lead_at | relative if t.last_lead_at else '—' }}</td>
+      <td class="num">{{ t.user_count }}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <form class="inline-form" method="post" action="/switch-tenant"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tenant_id" value="{{ t.id }}"><button class="btn ghost small" type="submit">Open leads</button></form>
+        <a class="btn ghost small" href="/admin/tenants/{{ t.id }}">Settings</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty"><strong>No clients yet</strong>Add the first client to get an intake URL and create their logins.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "auth/_base.html" %}
+{% block title %}Backup codes{% endblock %}
+{% block content %}
+<h1>Authenticator is on</h1>
+<p class="sub">Save these backup codes somewhere safe (a password manager, or a photo in a locked album). Each one signs you in once if you lose your phone. They won't be shown again.</p>
+<div class="codes">{% for c in codes %}<code>{{ c }}</code>{% endfor %}</div>
+<a class="btn hivis block" href="{{ next }}">I've saved them</a>
+{% endblock %}
