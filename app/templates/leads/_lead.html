@@ -58,6 +58,20 @@
       {% endif %}
     </div>
     <div class="hint">Tapping logs the attempt and moves a new lead to Contacted.{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
+    {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
+    <div class="next-up">
+      <span>
+        {% if lead.snoozed_until and lead.snoozed_until > now %}Snoozed until {{ lead.snoozed_until | local(tz) }}.
+        {% elif next_reminder %}Next reminder {{ next_reminder.due_at | local(tz) }}{% if next_reminder.rule == 'nudge' %} (still not contacted){% elif next_reminder.rule == 'close_loop' %} (did the quote close?){% endif %}.
+        {% else %}No reminder scheduled.{% endif %}
+        {% if lead.appointment_at %} Appointment {{ lead.appointment_at | local(tz) }}.{% endif %}
+      </span>
+      <span class="snooze">
+        <form method="post" action="/leads/{{ lead.id }}/snooze" hx-post="/leads/{{ lead.id }}/snooze" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="days" value="1"><button class="btn ghost small" type="submit">Snooze 1 day</button></form>
+        <form method="post" action="/leads/{{ lead.id }}/snooze" hx-post="/leads/{{ lead.id }}/snooze" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="days" value="3"><button class="btn ghost small" type="submit">3 days</button></form>
+      </span>
+    </div>
+    {% endif %}
   </div>
 
   <div class="status">
@@ -125,9 +139,11 @@
             {% if a.type == 'status_change' %}{{ a.detail.to | status_label }}{% if a.detail.deal_value %} · ${{ a.detail.deal_value }}{% endif %}{% if a.detail.lost_reason %} · {{ a.detail.lost_reason | lost_label }}{% endif %}{% if a.detail.auto %} <span class="who">(automatic)</span>{% endif %}
             {% elif a.type == 'created' %}Lead received <span class="who">via {{ a.detail.channel | channel_label }}{% if a.detail.platform and a.detail.platform != 'unknown' %}, {{ a.detail.platform | platform_label }}{% endif %}</span>
             {% elif a.type == 'assignment' %}Assigned <span class="who">{% if a.detail.how == 'default' %}automatically{% else %}by {{ a.actor_label }}{% endif %}</span>
+            {% elif a.type == 'reminder_sent' %}Reminder sent <span class="who">{{ a.body }}</span>
+            {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type != 'created' %}<div class="body">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation') %}<div class="body">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>

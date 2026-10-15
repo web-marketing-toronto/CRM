@@ -99,6 +99,8 @@ class ActivityType(StrEnum):
     DUPLICATE_SUBMISSION = "duplicate_submission"
     CONVERSION_SENT = "conversion_sent"
     IMPORT = "import"
+    APPOINTMENT = "appointment"
+    ESCALATION = "escalation"
 
 
 # Logging any of these on a New lead moves it to Contacted automatically.
@@ -118,6 +120,8 @@ ACTIVITY_LABELS = {
     ActivityType.DUPLICATE_SUBMISSION: "Submitted again",
     ActivityType.CONVERSION_SENT: "Sent to ad platform",
     ActivityType.IMPORT: "Imported",
+    ActivityType.APPOINTMENT: "Appointment",
+    ActivityType.ESCALATION: "Escalated to agency",
 }
 
 

@@ -179,6 +179,13 @@ def create_from_intake(
             conn, tenant_id, lead_id, ActivityType.DUPLICATE_SUBMISSION,
             body=fields.message, detail=source_detail,
         )
+        from app.services import followup
+
+        refreshed = conn.execute("SELECT * FROM lead WHERE id = %s", (lead_id,)).fetchone()
+        if reopened:
+            followup.on_lead_created(conn, tenant, {**refreshed, "created_at": now}, now=now)
+        else:
+            followup.on_resubmitted(conn, tenant, refreshed, now=now)
         return IntakeResult(lead_id=lead_id, ref_code=existing["ref_code"], created=False, reopened=reopened, area_status=area_status)
 
     ref_code = next_ref_code(conn, tenant_id)
@@ -212,6 +219,13 @@ def create_from_intake(
     log_activity(conn, tenant_id, lead_id, ActivityType.CREATED, body=fields.message, detail=source_detail, occurred_at=now)
     if assignee:
         log_activity(conn, tenant_id, lead_id, ActivityType.ASSIGNMENT, detail={"to": str(assignee), "how": "default"}, occurred_at=now)
+    from app.services import followup
+
+    followup.on_lead_created(
+        conn, tenant,
+        {"id": lead_id, "created_at": now, "assigned_to": assignee, "channel": fields.channel.value, "flags": flags, "status": "new"},
+        now=now,
+    )
     return IntakeResult(lead_id=lead_id, ref_code=ref_code, created=True, reopened=False, area_status=area_status)
 
 
@@ -280,14 +294,15 @@ def get_lead(conn: psycopg.Connection, lead_id: UUID) -> dict | None:
 
 
 def log_touch(
-    conn: psycopg.Connection, lead: dict, type_: ActivityType, *, actor_id: UUID | None, actor_label: str, note: str | None = None
+    conn: psycopg.Connection, lead: dict, type_: ActivityType, *, actor_id: UUID | None, actor_label: str, note: str | None = None,
+    now: datetime | None = None,
 ) -> None:
     """Record a call/text/email attempt. A New lead becomes Contacted; the last-touch clock resets."""
     if type_ not in TOUCH_TYPES:
         raise LeadError("not a touch type")
     tenant_id = lead["tenant_id"]
-    now = datetime.now(UTC)
-    log_activity(conn, tenant_id, lead["id"], type_, actor_id=actor_id, actor_label=actor_label, body=note)
+    now = now or datetime.now(UTC)
+    log_activity(conn, tenant_id, lead["id"], type_, actor_id=actor_id, actor_label=actor_label, body=note, occurred_at=now)
     sets = ["last_touch_at = %s", "next_action_at = NULL", "flags = flags - 'needs_review'"]
     params: list[Any] = [now]
     if lead["first_contact_at"] is None:
@@ -297,10 +312,17 @@ def log_touch(
         sets.append("status = 'contacted'")
         log_activity(
             conn, tenant_id, lead["id"], ActivityType.STATUS_CHANGE, actor_id=actor_id, actor_label=actor_label,
-            detail={"from": "new", "to": "contacted", "auto": True},
+            detail={"from": "new", "to": "contacted", "auto": True}, occurred_at=now,
         )
     params.append(lead["id"])
     conn.execute(f"UPDATE lead SET {', '.join(sets)} WHERE id = %s", params)
+    from app.services import followup
+
+    followup.on_touch(conn, _tenant(conn, tenant_id), {**lead, "status": "contacted" if lead["status"] == "new" else lead["status"]}, now=now)
+
+
+def _tenant(conn: psycopg.Connection, tenant_id: UUID) -> dict:
+    return conn.execute("SELECT * FROM tenant WHERE id = %s", (tenant_id,)).fetchone()
 
 
 def change_status(
@@ -313,6 +335,7 @@ def change_status(
     deal_value: Decimal | None = None,
     lost_reason: LostReason | None = None,
     note: str | None = None,
+    now: datetime | None = None,
 ) -> None:
     old = LeadStatus(lead["status"])
     if new_status == old:
@@ -321,7 +344,7 @@ def change_status(
         raise LeadError("Enter the deal value to mark a lead Won")
     if new_status == LeadStatus.LOST and lost_reason is None:
         raise LeadError("Pick a reason to mark a lead Lost")
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     sets = ["status = %s", "next_action_at = NULL", "flags = flags - 'needs_review'"]
     params: list[Any] = [new_status.value]
     if new_status == LeadStatus.WON:
@@ -347,8 +370,11 @@ def change_status(
         detail["lost_reason"] = lost_reason.value
     log_activity(
         conn, lead["tenant_id"], lead["id"], ActivityType.STATUS_CHANGE,
-        actor_id=actor_id, actor_label=actor_label, body=note, detail=detail,
+        actor_id=actor_id, actor_label=actor_label, body=note, detail=detail, occurred_at=now,
     )
+    from app.services import followup
+
+    followup.on_status_change(conn, _tenant(conn, lead["tenant_id"]), lead, old, new_status, now=now)
 
 
 def add_note(conn: psycopg.Connection, lead: dict, body: str, *, actor_id: UUID | None, actor_label: str) -> None:

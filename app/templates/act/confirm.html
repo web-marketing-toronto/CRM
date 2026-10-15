@@ -1,0 +1,20 @@
+{% extends "auth/_base.html" %}
+{% block title %}Confirm{% endblock %}
+{% block content %}
+<h1 style="font-size:20px">{{ label }} {{ lead.contact_name or lead.company or (lead.phone_e164 | phone) or lead.ref_code }} <span class="dim">({{ lead.ref_code }})</span></h1>
+{% if lead.job_type or lead.job_address %}<p class="sub">{{ lead.job_type or '' }}{% if lead.job_type and lead.job_address %} · {% endif %}{{ lead.job_address or '' }}</p>{% endif %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<form method="post" action="/act/{{ token }}">
+  {% if action == 'won' %}
+  <div class="field"><label for="deal_value">Job value</label><input id="deal_value" name="deal_value" type="text" inputmode="decimal" placeholder="8500" required autofocus></div>
+  {% elif action == 'lost' %}
+  <div class="field"><label for="lost_reason">Why</label>
+    <select id="lost_reason" name="lost_reason" required>
+      <option value="">Pick a reason</option>
+      {% for r in LostReason %}<option value="{{ r.value }}">{{ LOST_REASON_LABELS[r] }}</option>{% endfor %}
+    </select></div>
+  {% endif %}
+  <button class="btn hivis block" type="submit">{% if action == 'won' %}Mark won{% elif action == 'lost' %}Mark lost{% elif action.startswith('snooze') %}Snooze{% elif action == 'keep' %}Keep trying{% else %}Yes, I {{ action }}ed them{% endif %}</button>
+</form>
+<p class="dim" style="margin-top:16px;font-size:13px">Signed in as {{ user.name }}. <a href="/leads/{{ lead.id }}">Open the lead in the app</a> for notes and details.</p>
+{% endblock %}

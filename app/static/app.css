@@ -152,6 +152,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .actions .act[aria-disabled="true"] { background: var(--muted-soft); color: var(--ink-3); box-shadow: none; cursor: default; }
 .actions .act[aria-disabled="true"] small { color: var(--ink-3); }
 .hint { font-size: 13px; color: var(--ink-2); margin-top: 8px; }
+.next-up { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; background: var(--paper); border-radius: var(--radius); font-size: 14px; }
+.next-up .snooze { display: flex; gap: 6px; }
+.followup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
 
 .status { display: flex; flex-direction: column; gap: 10px; }
 .status .now { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-2); }

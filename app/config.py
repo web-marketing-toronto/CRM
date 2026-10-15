@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     # Optional integrations. Empty means the feature degrades gracefully.
     google_maps_api_key: str | None = None
 
+    # Messaging. Providers: 'twilio' | 'fake' (records only; tests) | 'log' (prints; local dev).
+    sms_provider: str = "log"
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_agency_from: str | None = None  # E.164 number used for alerts to agency staff and clients without their own number
+    email_provider: str = "log"            # 'postmark' | 'sendgrid' | 'fake' | 'log'
+    postmark_token: str | None = None
+    sendgrid_api_key: str | None = None
+    email_from: str = "leads@web-marketing-toronto.com"
+    email_from_name: str = "WMT Leads"
+
     # Shared secret for Cloud Scheduler -> /internal/cron/tick when OIDC is not used.
     cron_secret: str | None = None
 

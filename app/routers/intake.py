@@ -14,13 +14,13 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db import system_db
 from app.models import Channel
-from app.services import attribution
+from app.services import attribution, worker
 from app.services.leads import LeadError, create_from_intake
 
 log = logging.getLogger("crm.intake")
@@ -73,7 +73,7 @@ def _lookup_tenant(conn, slug: str, key: str | None) -> dict:
 
 @router.post("/{slug}/{key}")
 @router.post("/{slug}")
-async def intake(slug: str, request: Request, key: str | None = None):
+async def intake(slug: str, request: Request, background: BackgroundTasks, key: str | None = None):
     key = key or request.headers.get("x-intake-key") or request.query_params.get("key")
     body = await _read_body(request)
     settings = get_settings()
@@ -99,6 +99,7 @@ async def intake(slug: str, request: Request, key: str | None = None):
             raise HTTPException(status_code=422, detail=detail) from exc
 
     log.info("intake %s ref=%s created=%s channel=%s platform=%s", slug, result.ref_code, result.created, fields.channel, fields.platform)
+    background.add_task(worker.dispatch_lead_now, result.lead_id)
     return JSONResponse(
         {
             "ok": True,

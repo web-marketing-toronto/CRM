@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import importer
+from app.services import followup, importer
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -108,6 +108,8 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "hours_end": _twelve_hour(hours.get("end", "19:00")),
         "hours_days": [int(d) for d in hours.get("days", [1, 2, 3, 4, 5, 6])],
         "job_types_text": "\n".join(tenant["job_types"] or []),
+        "followup": followup.settings_for(tenant),
+        "followup_defaults": followup.DEFAULTS,
     }
 
 
@@ -144,6 +146,53 @@ def parse_hours(start: str, end: str, days: list[str]) -> dict:
     return {"start": clock(start, False), "end": clock(end, True), "days": chosen}
 
 
+def parse_followup(form) -> dict:
+    """The follow-up schedule fields into settings.followup. Blank fields fall back to the defaults."""
+    def nums(key: str, *, kind=float, lo=0, hi=10_000) -> list:
+        raw = str(form.get(key) or "").strip()
+        if not raw:
+            return list(followup.DEFAULTS[key])
+        out = []
+        for part in re.split(r"[,\s]+", raw):
+            if not part:
+                continue
+            try:
+                v = kind(part)
+            except ValueError as exc:
+                raise ValueError(f"'{part}' in the follow-up schedule isn't a number") from exc
+            if not (lo <= v <= hi):
+                raise ValueError(f"{part} is out of range for the follow-up schedule")
+            out.append(int(v) if v == int(v) else v)
+        if not out:
+            return list(followup.DEFAULTS[key])
+        return sorted(out)
+
+    def num(key: str, *, lo=0, hi=10_000):
+        raw = str(form.get(key) or "").strip()
+        if not raw:
+            return followup.DEFAULTS[key]
+        try:
+            v = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"'{raw}' isn't a number") from exc
+        if not (lo <= v <= hi):
+            raise ValueError(f"{raw} is out of range")
+        return int(v) if v == int(v) else v
+
+    digest = str(form.get("digest_time") or "").strip() or followup.DEFAULTS["digest_time"]
+    if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", digest):
+        raise ValueError("Digest time should look like 07:30 (24-hour)")
+    return {
+        "nudge_hours": nums("nudge_hours", hi=72),
+        "cadence_days": nums("cadence_days", hi=365),
+        "close_loop_days": nums("close_loop_days", hi=365),
+        "escalate_after_hours": num("escalate_after_hours", lo=1, hi=720),
+        "reply_nudge_hours": num("reply_nudge_hours", lo=0.25, hi=72),
+        "ignored_before_escalation": int(num("ignored_before_escalation", lo=1, hi=10)),
+        "digest_time": f"{int(digest.split(':')[0]):02d}:{digest.split(':')[1]}",
+    }
+
+
 @router.get("/tenants/{tenant_id}")
 def tenant_detail(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)], error: str | None = None, notice: str | None = None):
     return web.render(request, "admin/tenant.html", error=error, notice=notice, new_user_password=None, **_tenant_ctx(tenant_id))
@@ -165,19 +214,25 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     types = [t.strip() for t in re.split(r"[\n,]", get("job_types")) if t.strip()]
+    try:
+        followup_cfg = parse_followup(form)
+    except ValueError as exc:
+        return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     default_assignee = get("default_assignee_id") or None
     twilio = normalize_phone(get("twilio_number")) if get("twilio_number") else None
     with db(None, "agency_admin") as conn:
         conn.execute(
             """
             UPDATE tenant SET name = %s, timezone = %s, field_map = %s, service_area = %s, business_hours = %s,
-                              job_types = %s, default_assignee_id = %s, twilio_number = %s, is_active = %s
+                              job_types = %s, default_assignee_id = %s, twilio_number = %s, is_active = %s,
+                              settings = settings || %s
             WHERE id = %s
             """,
             (
                 get("name") or "Client", get("timezone") or "America/Toronto", Jsonb(field_map), Jsonb(service_area),
                 Jsonb(business_hours), types,
-                UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on", tenant_id,
+                UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on",
+                Jsonb({"followup": followup_cfg}), tenant_id,
             ),
         )
         auth_service.audit(conn, action="tenant_updated", user_id=principal.user_id, tenant_id=tenant_id, target_type="tenant", target_id=str(tenant_id))

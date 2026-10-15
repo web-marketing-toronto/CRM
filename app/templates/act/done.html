@@ -1,0 +1,7 @@
+{% extends "auth/_base.html" %}
+{% block title %}Done{% endblock %}
+{% block content %}
+<h1 style="font-size:20px">Done</h1>
+<p class="sub">{{ message }}</p>
+<a class="btn ghost block" href="/leads/{{ lead.id }}">Open the lead</a>
+{% endblock %}

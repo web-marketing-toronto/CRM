@@ -1,16 +1,36 @@
-"""Background work driven by the minute tick. Phase 2 adds the reminder rules here."""
+"""Background work driven by the minute tick from Cloud Scheduler.
+
+Each tick: send every reminder that has come due, then send any morning digests whose time has
+arrived. Both are idempotent (reminders are marked sent inside the same transaction; digests
+check the message log), so a double tick or a retried request sends nothing twice.
+"""
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from app.db import system_db
+from app.services import followup
+
+log = logging.getLogger("crm.worker")
 
 
-def run_tick() -> dict:
-    now = datetime.now(UTC)
+def run_tick(now: datetime | None = None) -> dict:
+    now = now or datetime.now(UTC)
     with system_db() as conn:
-        due = conn.execute(
-            "SELECT count(*) AS n FROM reminder WHERE sent_at IS NULL AND cancelled_at IS NULL AND due_at <= %s", (now,)
-        ).fetchone()
-    return {"at": now.isoformat(), "reminders_due": int(due["n"]), "sent": 0}
+        stats = followup.dispatch_due(conn, now=now)
+    with system_db() as conn:
+        digests = followup.run_digests(conn, now=now)
+    return {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests}
+
+
+def dispatch_lead_now(lead_id: UUID) -> None:
+    """Send whatever is already due for one lead (used right after a lead arrives or replies, so the
+    alert does not wait for the next minute tick)."""
+    try:
+        with system_db() as conn:
+            followup.dispatch_due(conn, lead_id=lead_id)
+    except Exception:  # noqa: BLE001 - background task; the minute tick will retry
+        log.exception("immediate dispatch failed for lead %s", lead_id)

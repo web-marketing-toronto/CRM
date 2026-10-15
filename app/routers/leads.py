@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated
 from uuid import UUID
@@ -16,6 +17,7 @@ from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
 from app.models import ActivityType, LeadStatus, LostReason, Platform
+from app.services import followup
 from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
@@ -119,7 +121,14 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
             "SELECT id, name FROM app_user WHERE tenant_id = %s AND is_active ORDER BY name", (principal.tenant_id,)
         ).fetchall()
         tenant = conn.execute("SELECT job_types FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
-    return {"lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or []}
+        next_reminder = conn.execute(
+            "SELECT rule, due_at FROM reminder WHERE lead_id = %s AND sent_at IS NULL AND cancelled_at IS NULL AND rule <> 'escalation' ORDER BY due_at LIMIT 1",
+            (lead_id,),
+        ).fetchone()
+    return {
+        "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
+        "next_reminder": next_reminder, "now": datetime.now(UTC),
+    }
 
 
 @router.get("/leads/new")
@@ -216,6 +225,19 @@ def status(
             )
         except svc.LeadError as exc:
             return _respond(request, principal, lead_id, error=str(exc))
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/snooze", dependencies=[Depends(check_csrf)])
+def snooze(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], days: Annotated[str, Form()] = "1"):
+    n = 3 if days.strip() == "3" else 1
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        until = followup.on_snooze(conn, tenant, lead, n)
+        svc.log_activity(conn, lead["tenant_id"], lead_id, ActivityType.NOTE, actor_id=principal.user_id, actor_label=principal.label, body=f"Snoozed {n} day{'s' if n > 1 else ''}, until {until.astimezone(followup.tz_for(tenant)).strftime('%a %b %-d, %-I:%M %p')}")
     return _respond(request, principal, lead_id)
 
 

@@ -28,6 +28,11 @@ os.environ["MIGRATE_DATABASE_URL"] = ADMIN_URL
 os.environ["SECRET_KEY"] = "test-secret-key-test-secret-key-test-secret-key"
 os.environ["BASE_URL"] = "http://testserver"
 os.environ["CRON_SECRET"] = "test-cron"
+os.environ["SMS_PROVIDER"] = "fake"
+os.environ["EMAIL_PROVIDER"] = "fake"
+os.environ["TWILIO_ACCOUNT_SID"] = "ACtest"
+os.environ["TWILIO_AUTH_TOKEN"] = "test-twilio-token"
+os.environ["TWILIO_AGENCY_FROM"] = "+14165550000"
 os.environ.pop("GOOGLE_MAPS_API_KEY", None)
 
 from app import db as dbmod  # noqa: E402
@@ -50,7 +55,16 @@ def database() -> Iterator[None]:
 def clean_tables() -> Iterator[None]:
     yield
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
-        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit, message_log, sms_opt_out, import_batch RESTART IDENTITY CASCADE")
+
+
+@pytest.fixture(autouse=True)
+def outbox():
+    from app.services import messaging
+
+    messaging.outbox.clear()
+    yield messaging.outbox
+    messaging.outbox.clear()
 
 
 @pytest.fixture
@@ -89,13 +103,13 @@ def make_tenant(admin_conn):
 def make_user(admin_conn):
     from app.auth import crypto
 
-    def _make(email: str, *, tenant_id=None, role: str = "member", name: str | None = None, password: str = "correct-horse-battery", totp_enabled: bool = False, must_set_password: bool = False):
+    def _make(email: str, *, tenant_id=None, role: str = "member", name: str | None = None, password: str = "correct-horse-battery", totp_enabled: bool = False, must_set_password: bool = False, mobile: str | None = None, notify_sms: bool = True, notify_email: bool = True):
         row = admin_conn.execute(
             """
-            INSERT INTO app_user (tenant_id, email, name, role, password_hash, totp_enabled, must_set_password)
-            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *
+            INSERT INTO app_user (tenant_id, email, name, role, password_hash, totp_enabled, must_set_password, mobile_e164, notify_sms, notify_email)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *
             """,
-            (tenant_id, email, name or email.split("@")[0].title(), role, crypto.hash_password(password), totp_enabled, must_set_password),
+            (tenant_id, email, name or email.split("@")[0].title(), role, crypto.hash_password(password), totp_enabled, must_set_password, mobile, notify_sms, notify_email),
         ).fetchone()
         return row
 
