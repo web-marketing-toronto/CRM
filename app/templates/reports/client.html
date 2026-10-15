@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block content %}
+<div class="section" style="margin-top:0">
+  <h1>Results <span class="dim" style="font-weight:400;font-size:16px">{{ period.label }}</span></h1>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <a class="btn ghost small" href="/reports/leads.csv?{{ request.url.query }}">Download leads (CSV)</a>
+    <form method="get" action="/reports/monthly.pdf" style="display:flex;gap:6px;align-items:center">
+      <select name="month" aria-label="Month" style="min-height:36px;padding:4px 8px;font-size:13px">{% for y, m, label in months %}<option value="{{ '%04d-%02d' % (y, m) }}">{{ label }}</option>{% endfor %}</select>
+      <button class="btn ghost small" type="submit">Monthly PDF</button>
+    </form>
+  </div>
+</div>
+{% with action='/reports' %}{% include "reports/_period.html" %}{% endwith %}
+
+{% set t = summary.total %}
+<div class="stats">
+  <div class="stat"><div class="v">{{ t.leads }}</div><div class="k">leads</div></div>
+  <div class="stat"><div class="v">{{ t.qualified_rate | pct }}</div><div class="k">contacted</div></div>
+  <div class="stat"><div class="v">{{ t.won }}</div><div class="k">won · {{ t.revenue | money }}</div></div>
+  <div class="stat"><div class="v">{{ t.close_rate | pct }}</div><div class="k">close rate (won ÷ won + lost)</div></div>
+  {% if show_spend and t.spend is not none %}
+  <div class="stat"><div class="v">{{ t.spend | money }}</div><div class="k">ad spend</div></div>
+  <div class="stat"><div class="v">{{ t.cpl | money if t.cpl is not none else '—' }}</div><div class="k">cost per lead</div></div>
+  <div class="stat"><div class="v">{{ t.cost_per_won | money if t.cost_per_won is not none else '—' }}</div><div class="k">cost per won job</div></div>
+  <div class="stat"><div class="v">{{ '%.1fx' % t.roas if t.roas is not none else '—' }}</div><div class="k">revenue ÷ spend</div></div>
+  {% endif %}
+  <div class="stat {{ 'alert' if summary.speed_median_min is not none and summary.speed_median_min > 60 else '' }}"><div class="v">{{ summary.speed_median_min | minutes }}</div><div class="k">speed to lead (median){% if summary.speed_within_hour_pct is not none %} · {{ summary.speed_within_hour_pct | pct }} within 1 h{% endif %}</div></div>
+  <div class="stat {{ 'alert' if summary.compliance_pct is not none and summary.compliance_pct < 70 else '' }}"><div class="v">{{ summary.compliance_pct | pct }}</div><div class="k">follow-up compliance</div></div>
+  <div class="stat {{ 'alert' if (t.bad_share or 0) >= 25 else '' }}"><div class="v">{{ t.bad_share | pct }}</div><div class="k">spam or out of area</div></div>
+  <div class="stat {{ 'alert' if summary.overdue else '' }}"><div class="v">{{ summary.overdue }}</div><div class="k">overdue right now · <a href="/leads">{{ summary.open_leads }} open</a></div></div>
+</div>
+
+<h2 style="margin:18px 0 8px">By source</h2>
+{% with rows=summary.by_platform, total=summary.total, first_col='Source', max_leads=(summary.by_platform | map(attribute='leads') | max if summary.by_platform else 0) %}{% include "reports/_source_table.html" %}{% endwith %}
+
+{% if summary.by_campaign %}
+<h2 style="margin:18px 0 8px">By campaign</h2>
+{% with rows=summary.by_campaign, total=none, first_col='Campaign', max_leads=(summary.by_campaign | map(attribute='leads') | max) %}{% include "reports/_source_table.html" %}{% endwith %}
+{% endif %}
+
+<h2 style="margin:18px 0 8px">How leads arrived</h2>
+{% with rows=summary.by_channel, total=none, first_col='Channel', max_leads=(summary.by_channel | map(attribute='leads') | max if summary.by_channel else 0), show_spend=false %}{% include "reports/_source_table.html" %}{% endwith %}
+
+{% if summary.lost_reasons %}
+<h2 style="margin:18px 0 8px">Why leads were lost</h2>
+<div class="table-wrap"><table class="data"><tbody>
+{% for k, n in summary.lost_reasons %}<tr><td>{{ k | lost_label if k else 'No reason' }}</td><td class="num">{{ n }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+
+<p class="dim" style="font-size:13px;margin-top:18px">Leads are counted by the day they arrived. A lead belongs to the platform that first brought it; leads with no campaign data show as organic, direct or unknown rather than being hidden. Speed to lead is the median time from arrival to the first logged call, text or email. Follow-up compliance is the share of leads either closed or touched at least as often as the follow-up schedule asks.{% if show_spend %} Spend comes from the ad platforms nightly and includes yesterday.{% endif %}</p>
+{% endblock %}

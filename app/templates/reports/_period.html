@@ -1,0 +1,14 @@
+<form class="period-bar" method="get" action="{{ action }}">
+  <div class="seg" role="tablist">
+    {% for key, label in periods if key != 'custom' %}
+    <button type="submit" name="period" value="{{ key }}" class="{{ 'on' if period.key == key else '' }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <div class="custom">
+    <input type="hidden" name="period" value="custom">
+    <input type="date" name="start" value="{{ query.start or '' }}" aria-label="From">
+    <span class="dim">to</span>
+    <input type="date" name="end" value="{{ query.end or '' }}" aria-label="To">
+    <button class="btn ghost small" type="submit">Go</button>
+  </div>
+</form>

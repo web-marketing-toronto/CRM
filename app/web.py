@@ -92,6 +92,23 @@ env = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
 )
+def _pct(value) -> str:
+    return "—" if value is None else f"{value:.0f}%"
+
+
+def _minutes(value) -> str:
+    if value is None:
+        return "—"
+    v = float(value)
+    if v < 60:
+        return f"{v:.0f} min"
+    if v < 60 * 24:
+        return f"{v / 60:.1f} h"
+    return f"{v / 1440:.1f} d"
+
+
+env.filters["pct"] = _pct
+env.filters["minutes"] = _minutes
 env.filters["relative"] = _relative
 env.filters["local"] = _local
 env.filters["money"] = _money

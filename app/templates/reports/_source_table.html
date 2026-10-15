@@ -1,0 +1,33 @@
+<div class="table-wrap">
+<table class="data">
+  <thead><tr>
+    <th>{{ first_col }}</th><th class="num">Leads</th><th class="num">Contacted</th><th class="num">Won</th><th class="num">Revenue</th>
+    {% if show_spend %}<th class="num">Spend</th><th class="num">Cost / lead</th><th class="num">Cost / won</th>{% endif %}
+    <th class="num" title="Lost as spam or out of area">Spam / OOA</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.label }}</td>
+      <td class="num"><span class="bar" style="--w:{{ (100 * r.leads / max_leads) | round | int if max_leads else 0 }}%"></span>{{ r.leads }}</td>
+      <td class="num">{{ r.qualified_rate | pct }}</td>
+      <td class="num">{{ r.won }}</td>
+      <td class="num">{{ r.revenue | money }}</td>
+      {% if show_spend %}
+      <td class="num">{{ r.spend | money if r.spend is not none else '—' }}</td>
+      <td class="num">{{ r.cpl | money if r.cpl is not none else '—' }}</td>
+      <td class="num">{{ r.cost_per_won | money if r.cost_per_won is not none else '—' }}</td>
+      {% endif %}
+      <td class="num {{ 'warn' if (r.bad_share or 0) >= 25 else '' }}">{{ r.bad_share | pct }}</td>
+    </tr>
+  {% endfor %}
+  {% if total %}
+    <tr class="total">
+      <td>All</td><td class="num">{{ total.leads }}</td><td class="num">{{ total.qualified_rate | pct }}</td><td class="num">{{ total.won }}</td><td class="num">{{ total.revenue | money }}</td>
+      {% if show_spend %}<td class="num">{{ total.spend | money if total.spend is not none else '—' }}</td><td class="num">{{ total.cpl | money if total.cpl is not none else '—' }}</td><td class="num">{{ total.cost_per_won | money if total.cost_per_won is not none else '—' }}</td>{% endif %}
+      <td class="num">{{ total.bad_share | pct }}</td>
+    </tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>

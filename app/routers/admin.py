@@ -119,6 +119,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "meta_cfg": conversions.meta_cfg(tenant),
         "conv": conversions.conv_cfg(tenant),
         "recent_conversions": recent_conv,
+        "show_spend": bool(((tenant.get("settings") or {}).get("reports") or {}).get("show_spend")),
         "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
         "field_map_json": json.dumps(tenant["field_map"], indent=2),
         "service_area_json": json.dumps(tenant["service_area"], indent=2),
@@ -331,6 +332,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                 Jsonb({
                     "followup": followup_cfg, "lead_messaging": lead_msg_cfg, "callrail": {"min_seconds": call_min},
                     "meta": {**ads_cfg["meta"], "page_id": meta_page_id}, "google_ads": ads_cfg["google_ads"], "conversions": ads_cfg["conversions"],
+                    "reports": {"show_spend": form.get("show_spend") == "on"},
                 }), tenant_id,
             ),
         )

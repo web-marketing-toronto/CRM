@@ -14,7 +14,7 @@ from app import web
 from app.auth.deps import LoginRequired, redirect_for
 from app.config import get_settings
 from app.db import close_pool, init_pool
-from app.routers import account, act, admin, auth, cron, health, intake, leads, sources, twilio
+from app.routers import account, act, admin, auth, cron, health, intake, leads, reports, sources, twilio
 
 log = logging.getLogger("crm")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router)
     app.include_router(leads.router)
     app.include_router(admin.router)
+    app.include_router(reports.router)
     app.include_router(cron.router)
     app.include_router(twilio.router)
     app.include_router(act.router)

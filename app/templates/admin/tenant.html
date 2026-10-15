@@ -223,6 +223,7 @@
         <div class="field"><label for="value_bidding_since" class="dim" style="font-weight:500">Value-based bidding since</label><input id="value_bidding_since" name="value_bidding_since" type="date" value="{{ conv.value_bidding_since }}"></div>
       </div>
       <label class="check"><input type="checkbox" name="conversions_enabled" {{ 'checked' if conv.enabled else '' }}> Send Qualified / Won back to the ad platforms</label>
+      <label class="check"><input type="checkbox" name="show_spend" {{ 'checked' if show_spend else '' }}> Show ad spend and cost per lead on the client's Results page</label>
       {% if recent_conversions %}
       <details style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:13px">Recent uploads</summary>
         <table class="data" style="margin-top:8px;font-size:13px"><thead><tr><th>Lead</th><th>What</th><th>Status</th><th>When</th></tr></thead><tbody>

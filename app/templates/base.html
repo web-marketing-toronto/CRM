@@ -27,8 +27,8 @@
   {% endblock %}
   <nav>
     {% if principal %}
-      {% if principal.tenant %}<a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}">Leads</a>{% endif %}
-      {% if principal.is_agency %}<a href="/admin" class="{{ 'current' if request.url.path.startswith('/admin') else '' }}">Clients</a>{% endif %}
+      {% if principal.tenant %}<a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}">Leads</a><a href="/reports" class="{{ 'current' if request.url.path.startswith('/reports') else '' }}">Results</a>{% endif %}
+      {% if principal.is_agency %}<a href="/admin" class="{{ 'current' if request.url.path.startswith('/admin') and not request.url.path.startswith('/admin/reports') else '' }}">Clients</a><a href="/admin/reports" class="{{ 'current' if request.url.path.startswith('/admin/reports') else '' }}">Reports</a>{% endif %}
       <a href="/account" class="{{ 'current' if request.url.path.startswith('/account') else '' }}" aria-label="Account">{{ principal.user.name.split(' ')[0] }}</a>
     {% endif %}
   </nav>

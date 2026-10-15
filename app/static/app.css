@@ -163,6 +163,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .timeline .body.bubble { border-radius: 10px; padding: 8px 12px; margin-top: 4px; max-width: 520px; white-space: pre-wrap; }
 .timeline .body.bubble.out { background: var(--on-soft); }
 .timeline .body.bubble.in { background: var(--paper); border: 1px solid var(--line); }
+.period-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.period-bar .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; background: var(--card); }
+.period-bar .seg button { min-height: 38px; padding: 0 12px; border: 0; border-right: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.period-bar .seg button:last-child { border-right: 0; }
+.period-bar .seg button.on { background: var(--ink); color: #fff; }
+.period-bar .custom { display: flex; align-items: center; gap: 6px; }
+.period-bar .custom input[type="date"] { min-height: 38px; padding: 4px 8px; font-size: 13px; }
+table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data td.warn { color: var(--alert); font-weight: 700; }
+table.data tr.total td { font-weight: 700; border-top: 2px solid var(--ink); }
+table.data td .bar { display: inline-block; height: 8px; width: var(--w, 0%); max-width: 60px; background: var(--signal-soft); border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .followup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
 
 .status { display: flex; flex-direction: column; gap: 10px; }

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block content %}
+<div class="section" style="margin-top:0">
+  <h1>All clients <span class="dim" style="font-weight:400;font-size:16px">{{ period.label }}</span></h1>
+  <a class="btn ghost small" href="/admin/reports.csv?{{ request.url.query }}">Download every lead (CSV)</a>
+</div>
+{% with action='/admin/reports' %}{% include "reports/_period.html" %}{% endwith %}
+
+<div class="stats">
+  <div class="stat"><div class="v">{{ total.leads }}</div><div class="k">leads</div></div>
+  <div class="stat"><div class="v">{{ total.won }}</div><div class="k">won · {{ total.revenue | money }}</div></div>
+  <div class="stat"><div class="v">{{ total.spend | money if total.spend is not none else '—' }}</div><div class="k">ad spend</div></div>
+  <div class="stat"><div class="v">{{ total.cpl | money if total.cpl is not none else '—' }}</div><div class="k">cost per lead</div></div>
+  <div class="stat"><div class="v">{{ total.cost_per_won | money if total.cost_per_won is not none else '—' }}</div><div class="k">cost per won job</div></div>
+  <div class="stat"><div class="v">{{ extras.speed_median_min | minutes }}</div><div class="k">speed to lead (weighted median)</div></div>
+  <div class="stat"><div class="v">{{ extras.compliance_pct | pct }}</div><div class="k">follow-up compliance</div></div>
+  <div class="stat"><div class="v">{{ total.bad_share | pct }}</div><div class="k">spam or out of area</div></div>
+</div>
+
+<div class="table-wrap">
+<table class="data">
+  <thead><tr>
+    <th>Client</th><th class="num">Leads</th><th class="num">Contacted</th><th class="num">Won</th><th class="num">Revenue</th><th class="num">Spend</th><th class="num">Cost / lead</th><th class="num">Cost / won</th><th class="num">Speed</th><th class="num">Compliance</th><th class="num">Spam / OOA</th><th class="num">Overdue</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}{% set t = r.summary.total %}
+    <tr>
+      <td><a href="/admin/tenants/{{ r.tenant.id }}">{{ r.tenant.name }}</a></td>
+      <td class="num">{{ t.leads }}</td><td class="num">{{ t.qualified_rate | pct }}</td><td class="num">{{ t.won }}</td><td class="num">{{ t.revenue | money }}</td>
+      <td class="num">{{ t.spend | money if t.spend is not none else '—' }}</td><td class="num">{{ t.cpl | money if t.cpl is not none else '—' }}</td><td class="num">{{ t.cost_per_won | money if t.cost_per_won is not none else '—' }}</td>
+      <td class="num {{ 'warn' if r.summary.speed_median_min is not none and r.summary.speed_median_min > 60 else '' }}">{{ r.summary.speed_median_min | minutes }}</td>
+      <td class="num {{ 'warn' if r.summary.compliance_pct is not none and r.summary.compliance_pct < 70 else '' }}">{{ r.summary.compliance_pct | pct }}</td>
+      <td class="num {{ 'warn' if (t.bad_share or 0) >= 25 else '' }}">{{ t.bad_share | pct }}</td>
+      <td class="num {{ 'warn' if r.summary.overdue else '' }}">{{ r.summary.overdue }}</td>
+      <td><form class="inline-form" method="post" action="/switch-tenant"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tenant_id" value="{{ r.tenant.id }}"><input type="hidden" name="next" value="/reports?{{ request.url.query }}"><button class="btn ghost small" type="submit">Full report</button></form></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="dim" style="font-size:13px;margin-top:14px">Speed is the median minutes to first contact; compliance is the share of leads closed or touched as often as the client's follow-up schedule asks. A client needs their Google customer id or Meta ad account on their settings page for spend to appear.</p>
+{% endblock %}

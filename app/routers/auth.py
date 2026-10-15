@@ -164,7 +164,7 @@ def set_password_submit(
 # --- Agency: switch the client in scope ---------------------------------------------------
 
 @router.post("/switch-tenant", dependencies=[Depends(check_csrf)])
-def switch_tenant(request: Request, principal: Annotated[Principal, Depends(require_user)], tenant_id: Annotated[str, Form()] = ""):
+def switch_tenant(request: Request, principal: Annotated[Principal, Depends(require_user)], tenant_id: Annotated[str, Form()] = "", next: Annotated[str, Form()] = ""):
     if not principal.is_agency:
         return RedirectResponse("/leads", status_code=303)
     tid = UUID(tenant_id) if tenant_id else None
@@ -173,4 +173,5 @@ def switch_tenant(request: Request, principal: Annotated[Principal, Depends(requ
             if conn.execute("SELECT 1 FROM tenant WHERE id = %s", (tid,)).fetchone() is None:
                 return RedirectResponse("/admin", status_code=303)
     service.set_acting_tenant(principal.session["id"], tid, user_id=principal.user_id, ip=None)
-    return RedirectResponse("/leads" if tid else "/admin", status_code=303)
+    target = next if next.startswith("/") and not next.startswith("//") else ("/leads" if tid else "/admin")
+    return RedirectResponse(target, status_code=303)
