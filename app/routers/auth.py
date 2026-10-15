@@ -136,6 +136,45 @@ def enrol_skip(request: Request, principal: Annotated[Principal, Depends(require
 
 # --- Forced password set ------------------------------------------------------------------
 
+# --- Forgot password ------------------------------------------------------------------------
+
+@router.get("/login/forgot")
+def forgot_form(request: Request):
+    return web.render(request, "auth/forgot.html", sent=False, email="")
+
+
+@router.post("/login/forgot")
+def forgot_submit(request: Request, email: Annotated[str, Form()] = ""):
+    if email.strip():
+        with db(None, "system") as conn:
+            service.request_password_reset(conn, email, ip=service._ip(request))
+    return web.render(request, "auth/forgot.html", sent=True, email=email.strip())
+
+
+@router.get("/login/reset/{token}")
+def reset_form(request: Request, token: str):
+    with db(None, "system") as conn:
+        user = service.user_for_reset_token(conn, token)
+    if user is None:
+        return web.render(request, "auth/forgot.html", status_code=400, sent=False, email="", error="That link has expired or was already used. Ask for a new one.")
+    return web.render(request, "auth/reset.html", token=token, first_name=user["name"].split(" ")[0], error=None)
+
+
+@router.post("/login/reset/{token}")
+def reset_submit(request: Request, token: str, password: Annotated[str, Form()], password2: Annotated[str, Form()]):
+    with db(None, "system") as conn:
+        user = service.user_for_reset_token(conn, token)
+        if user is None:
+            return web.render(request, "auth/forgot.html", status_code=400, sent=False, email="", error="That link has expired or was already used. Ask for a new one.")
+        if password != password2:
+            return web.render(request, "auth/reset.html", status_code=400, token=token, first_name=user["name"].split(" ")[0], error="The two passwords don't match.")
+        try:
+            service.complete_password_reset(conn, user, password, ip=service._ip(request))
+        except AuthError as exc:
+            return web.render(request, "auth/reset.html", status_code=400, token=token, first_name=user["name"].split(" ")[0], error=str(exc))
+    return web.render(request, "auth/login.html", next="/", error=None, email=user["email"], notice="Password changed. Sign in with the new one.")
+
+
 @router.get("/login/set-password")
 def set_password_form(request: Request, principal: Annotated[Principal, Depends(require_password_only)]):
     return web.render(request, "auth/set_password.html", error=None, forced=principal.user["must_set_password"])

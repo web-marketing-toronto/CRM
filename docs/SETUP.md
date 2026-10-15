@@ -199,6 +199,12 @@ so intake URLs and emails use the real domain.
 - **Release**: `git pull && bash deploy/deploy.sh`
 - **Logs**: `gcloud run services logs read crm --region=northamerica-northeast2 --limit=200`
 - **Database shell**: `gcloud sql connect crm-pg --user=crm_migrate --database=crm`
+- **Forgot password**: the login screen has *Forgot your password?*; it emails a one-hour link. Until an email
+  provider is wired, the link is printed in the Cloud Run logs instead:
+  `gcloud run services logs read crm --region=northamerica-northeast2 --limit=50 | grep -o 'https://[^ ]*/login/reset/[^ ]*'`
+- **Reset any login from the command line** (including your own, and a lockout): run the `crm-admin` job from
+  step 3 with `--args="-m,app.cli,set-password,--email,who@example.com,--password,NEW-PASSWORD"`; add
+  `,--clear-mfa` to also remove their authenticator.
 - **A client user lost their phone**: client page → *Clear authenticator*. They enrol a new one at next login.
 - **Rotate a client's intake key** (if a URL leaked): client page → *Generate a new key*, then update their forms
   and the CallRail / Google lead-form webhooks.

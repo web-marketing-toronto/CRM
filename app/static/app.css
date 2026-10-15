@@ -244,7 +244,8 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 .btn[disabled] { opacity: 0.5; cursor: default; }
 .inline-form { display: inline; }
 
-.notice, .error-box { padding: 12px 14px; border-radius: var(--radius); margin-bottom: 14px; font-weight: 500; }
+.notice, .notice-box { background: var(--won-soft); color: var(--won); border-left: 4px solid var(--won); padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 14px; font-weight: 600; }
+.error-box { padding: 12px 14px; border-radius: var(--radius); margin-bottom: 14px; font-weight: 500; }
 .notice { background: var(--won-soft); color: var(--won); }
 .error-box { background: var(--alert-soft); color: var(--alert); }
 .warn { background: #fff4cc; color: #6b5300; padding: 12px 14px; border-radius: var(--radius); margin-bottom: 14px; }

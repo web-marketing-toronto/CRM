@@ -3,11 +3,12 @@
 <h1>Sign in</h1>
 <p class="sub">Your leads, follow-ups and results.</p>
 {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+{% if notice %}<div class="notice-box">{{ notice }}</div>{% endif %}
 <form method="post" action="/login">
   <input type="hidden" name="next" value="{{ next }}">
   <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" required autofocus></div>
   <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
   <button class="btn hivis block" type="submit">Sign in</button>
 </form>
-<p class="dim" style="margin-top:16px;font-size:13px">Forgot your password? Ask {{ settings.agency_name }} for a reset.</p>
+<p class="dim" style="margin-top:16px;font-size:13px"><a href="/login/forgot">Forgot your password?</a></p>
 {% endblock %}

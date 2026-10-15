@@ -269,3 +269,42 @@ def test_only_agency_can_delete_lead(client, make_tenant, make_user, admin_conn)
     assert admin_conn.execute("SELECT count(*) AS n FROM lead WHERE id = %s", (lid,)).fetchone()["n"] == 0
     assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s", (lid,)).fetchone()["n"] == 0
     assert admin_conn.execute("SELECT count(*) AS n FROM audit WHERE action = 'lead_deleted'").fetchone()["n"] == 1
+
+
+def test_forgot_password_flow_and_cli_reset(client, make_tenant, make_user, admin_conn, outbox):
+    t = make_tenant("alpha")
+    user = make_user("dan@alpha.test", tenant_id=t["id"], password="old-password-123")
+    page = client.get("/login")
+    assert 'href="/login/forgot"' in page.text
+    # Unknown address: same answer, nothing sent.
+    r = client.post("/login/forgot", data={"email": "nobody@alpha.test"})
+    assert r.status_code == 200 and "a reset link is on its way" in r.text and not outbox.email
+    # Known address: one email with a one-hour link.
+    r = client.post("/login/forgot", data={"email": "DAN@alpha.test"})
+    assert r.status_code == 200 and len(outbox.email) == 1 and outbox.email[0]["kind"] == "password_reset"
+    link = re.search(r"http://testserver(/login/reset/\S+)", outbox.email[0]["text"]).group(1)
+    assert "Choose a new password" in client.get(link).text
+    r = client.post(link, data={"password": "brand-new-password-9", "password2": "different"})
+    assert r.status_code == 400 and "don" in r.text
+    r = client.post(link, data={"password": "brand-new-password-9", "password2": "brand-new-password-9"})
+    assert r.status_code == 200 and "Password changed" in r.text
+    # Old password dead, new one works, link single-use.
+    assert client.post("/login", data={"email": "dan@alpha.test", "password": "old-password-123"}).status_code == 401
+    assert client.post("/login", data={"email": "dan@alpha.test", "password": "brand-new-password-9"}, follow_redirects=False).status_code == 303
+    assert client.get(link).status_code == 400
+    # Rate limit: three per hour, and one was already used above.
+    outbox.email.clear()
+    for _ in range(4):
+        client.post("/login/forgot", data={"email": "dan@alpha.test"})
+    assert len(outbox.email) == 2
+    # Operator reset from the command line clears a lockout too.
+    from app import cli
+
+    admin_conn.execute("UPDATE app_user SET failed_logins = 8, locked_until = now() + interval '15 minutes' WHERE id = %s", (user["id"],))
+    assert cli.main(["set-password", "--email", "dan@alpha.test", "--password", "cli-set-password-7"]) == 0
+    from app import db as dbmod
+
+    dbmod.init_pool(__import__("tests.conftest", fromlist=["APP_URL"]).APP_URL)  # the CLI closes the shared pool
+    assert client.post("/login", data={"email": "dan@alpha.test", "password": "cli-set-password-7"}, follow_redirects=False).status_code == 303
+    assert cli.main(["set-password", "--email", "ghost@alpha.test", "--password", "whatever-whatever"]) == 1
+    dbmod.init_pool(__import__("tests.conftest", fromlist=["APP_URL"]).APP_URL)

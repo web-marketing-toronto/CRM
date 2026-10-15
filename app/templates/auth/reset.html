@@ -1,0 +1,12 @@
+{% extends "auth/_base.html" %}
+{% block title %}Choose a new password{% endblock %}
+{% block content %}
+<h1>Choose a new password</h1>
+<p class="sub">Hi {{ first_name }}. At least 10 characters; a short phrase works well. Any other sessions you have open will be signed out.</p>
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+<form method="post" action="/login/reset/{{ token }}">
+  <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required autofocus></div>
+  <div class="field"><label for="password2">Again</label><input id="password2" name="password2" type="password" autocomplete="new-password" minlength="10" required></div>
+  <button class="btn hivis block" type="submit">Save and sign in</button>
+</form>
+{% endblock %}

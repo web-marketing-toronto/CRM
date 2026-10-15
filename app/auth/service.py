@@ -138,6 +138,61 @@ def set_password(conn: psycopg.Connection, user_id: UUID, password: str) -> None
     )
 
 
+# --- Password reset by email ------------------------------------------------------------
+RESET_TOKEN_SECONDS = 60 * 60
+
+
+def request_password_reset(conn: psycopg.Connection, email: str, *, ip: str | None = None) -> bool:
+    """Email a one-hour reset link if the address has an active login. Always returns quietly so the
+    form can't be used to find out which addresses exist. At most 3 links per address per hour."""
+    from app.config import get_settings
+    from app.services import messaging
+
+    user = conn.execute("SELECT * FROM app_user WHERE email_lower = lower(%s) AND is_active", (email.strip(),)).fetchone()
+    if user is None:
+        audit(conn, action="password_reset_requested_unknown", user_id=None, tenant_id=None, detail={"email": email.strip()[:200]}, ip=ip)
+        return False
+    recent = conn.execute(
+        "SELECT count(*) AS n FROM audit WHERE action = 'password_reset_requested' AND user_id = %s AND created_at > now() - interval '1 hour'", (user["id"],)
+    ).fetchone()["n"]
+    if recent >= 3:
+        return False
+    token = crypto.signed_token({"u": str(user["id"]), "h": crypto.hash_backup_code(user["password_hash"])[:16]}, salt="pwreset")
+    link = f"{get_settings().base_url}/login/reset/{token}"
+    agency = get_settings().agency_name
+    text = (
+        f"Hi {user['name'].split(' ')[0]},\n\nSomeone (probably you) asked to reset the password for your {agency} CRM login. "
+        f"Open this link within the hour to choose a new one:\n\n{link}\n\nIf you didn't ask, ignore this; your password is unchanged."
+    )
+    html = (
+        f"<p>Hi {user['name'].split(' ')[0]},</p><p>Someone (probably you) asked to reset the password for your {agency} CRM login. "
+        f"The link works for one hour.</p><p><a href='{link}' style='display:inline-block;padding:11px 16px;background:#ffd400;color:#16202b;font-weight:700;border-radius:6px;text-decoration:none'>Choose a new password</a></p>"
+        f"<p style='color:#4f5a66;font-size:13px'>If you didn't ask, ignore this; your password is unchanged.<br>{link}</p>"
+    )
+    messaging.send_email(conn, to=user["email"], subject=f"Reset your {agency} CRM password", text=text, html=html, kind="password_reset", tenant_id=user["tenant_id"], user_id=user["id"])
+    audit(conn, action="password_reset_requested", user_id=user["id"], tenant_id=user["tenant_id"], ip=ip)
+    return True
+
+
+def user_for_reset_token(conn: psycopg.Connection, token: str) -> dict | None:
+    """The user a reset link belongs to, or None if the link is expired, forged, or already used
+    (the token is bound to the password hash, so it dies the moment the password changes)."""
+    data = crypto.read_signed_token(token, salt="pwreset", max_age_seconds=RESET_TOKEN_SECONDS)
+    if not data:
+        return None
+    user = conn.execute("SELECT * FROM app_user WHERE id = %s AND is_active", (UUID(data["u"]),)).fetchone()
+    if user is None or crypto.hash_backup_code(user["password_hash"])[:16] != data.get("h"):
+        return None
+    return user
+
+
+def complete_password_reset(conn: psycopg.Connection, user: dict, password: str, *, ip: str | None = None) -> None:
+    set_password(conn, user["id"], password)
+    conn.execute("UPDATE app_user SET failed_logins = 0, locked_until = NULL WHERE id = %s", (user["id"],))
+    conn.execute("DELETE FROM session WHERE user_id = %s", (user["id"],))
+    audit(conn, action="password_reset", user_id=user["id"], tenant_id=user["tenant_id"], ip=ip)
+
+
 # --- Login ------------------------------------------------------------------------------
 
 def login(email: str, password: str, request: Request | None = None) -> tuple[dict, str]:

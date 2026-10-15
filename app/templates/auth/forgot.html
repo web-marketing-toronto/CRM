@@ -1,0 +1,17 @@
+{% extends "auth/_base.html" %}
+{% block title %}Reset your password{% endblock %}
+{% block content %}
+<h1>Reset your password</h1>
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+{% if sent %}
+<p class="sub">If <strong>{{ email }}</strong> has a login, a reset link is on its way. It works for one hour. Check spam if it hasn't arrived in a couple of minutes.</p>
+<p class="dim" style="font-size:13px">Wrong address or no email at all? <a href="/login/forgot">Try again</a>, or ask {{ settings.agency_name }} to reset it for you.</p>
+{% else %}
+<p class="sub">Enter the email you sign in with and we'll send a link to choose a new password.</p>
+<form method="post" action="/login/forgot">
+  <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus></div>
+  <button class="btn hivis block" type="submit">Send the link</button>
+</form>
+<p class="dim" style="margin-top:16px;font-size:13px"><a href="/login">Back to sign in</a></p>
+{% endif %}
+{% endblock %}

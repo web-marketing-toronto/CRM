@@ -1,6 +1,7 @@
 """Operator commands.
 
     python -m app.cli create-admin --email you@agency.com --name "Jeff"
+    python -m app.cli set-password --email you@agency.com [--password ...] [--clear-mfa]
     python -m app.cli seed-demo            # local only: a demo client with sample leads
 """
 
@@ -37,6 +38,31 @@ def create_admin(args: argparse.Namespace) -> int:
     finally:
         close_pool()
     print(f"created agency admin {args.email}. They will set up an authenticator app at first login.")
+    return 0
+
+
+def set_password(args: argparse.Namespace) -> int:
+    """Operator reset for any login: new password, lockout cleared, every session ended, optionally the authenticator too."""
+    password = args.password or getpass.getpass("New password (min 10 chars): ")
+    init_pool()
+    try:
+        with db(None, "system") as conn:
+            user = conn.execute("SELECT * FROM app_user WHERE email_lower = lower(%s)", (args.email,)).fetchone()
+            if user is None:
+                print(f"error: no login with the email {args.email}", file=sys.stderr)
+                return 1
+            auth_service.set_password(conn, user["id"], password)
+            conn.execute("UPDATE app_user SET failed_logins = 0, locked_until = NULL, is_active = true WHERE id = %s", (user["id"],))
+            conn.execute("DELETE FROM session WHERE user_id = %s", (user["id"],))
+            if args.clear_mfa:
+                conn.execute("UPDATE app_user SET totp_enabled = false, totp_secret_enc = NULL, totp_last_counter = NULL, backup_codes = '[]'::jsonb WHERE id = %s", (user["id"],))
+            auth_service.audit(conn, action="password_reset_cli", user_id=user["id"], tenant_id=user["tenant_id"], detail={"mfa_cleared": bool(args.clear_mfa)})
+    except AuthError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        close_pool()
+    print(f"password set for {user['email']}; lockout cleared, sessions ended" + ("; authenticator cleared, they enrol again at next login" if args.clear_mfa else ""))
     return 0
 
 
@@ -96,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--name", required=True)
     p.add_argument("--password", help="omit to be prompted")
     p.set_defaults(func=create_admin)
+    r = sub.add_parser("set-password")
+    r.add_argument("--email", required=True)
+    r.add_argument("--password", help="omit to be prompted")
+    r.add_argument("--clear-mfa", action="store_true", help="also remove the authenticator so they enrol a new one")
+    r.set_defaults(func=set_password)
     s = sub.add_parser("seed-demo")
     s.set_defaults(func=seed_demo)
     args = parser.parse_args(argv)
