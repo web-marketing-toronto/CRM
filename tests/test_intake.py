@@ -124,3 +124,12 @@ def test_tenants_are_isolated_in_intake(client, make_tenant, admin_conn):
 def test_inactive_tenant_rejects(client, make_tenant):
     t = make_tenant("kappa", is_active=False)
     assert client.post(_url(t), json={"name": "X", "phone": "7055550100"}).status_code == 404
+
+
+def test_rejection_names_the_fields_it_saw(client, make_tenant):
+    t = make_tenant("lam")
+    r = client.post(_url(t), json={"Full Nmae": "Typo Field", "cellphone_no": "7055550100"})
+    assert r.status_code == 422
+    assert "Fields received: cellphone_no, full_nmae" in r.json()["detail"]
+    r = client.post(_url(t), json={})
+    assert r.status_code == 422 and "no fields at all" in r.json()["detail"]

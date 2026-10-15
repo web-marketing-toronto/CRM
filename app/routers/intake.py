@@ -89,8 +89,14 @@ async def intake(slug: str, request: Request, key: str | None = None):
                 conn, tenant, fields, raw_payload=body, ip=ip, user_agent=user_agent, maps_api_key=settings.google_maps_api_key
             )
         except LeadError as exc:
-            log.info("intake rejected for %s: %s", slug, exc)
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            received = sorted(fields.flat.keys())[:40]
+            log.info("intake rejected for %s: %s (fields: %s)", slug, exc, received)
+            detail = str(exc)
+            if received:
+                detail += ". Fields received: " + ", ".join(received) + ". Expected one of: name, phone, email (see the field map in the client's settings)"
+            else:
+                detail += ". The request had no fields at all; check the Data section of the sending step"
+            raise HTTPException(status_code=422, detail=detail) from exc
 
     log.info("intake %s ref=%s created=%s channel=%s platform=%s", slug, result.ref_code, result.created, fields.channel, fields.platform)
     return JSONResponse(
