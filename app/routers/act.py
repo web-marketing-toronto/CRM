@@ -33,6 +33,8 @@ LABELS = {
     "won": "Mark as Won:",
     "lost": "Mark as Lost:",
     "keep": "Keep following up with",
+    "keep_area": "Cancel the out-of-area decline and keep",
+    "decline_now": "Decline as out of area and let them know:",
 }
 
 

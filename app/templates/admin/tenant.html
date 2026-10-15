@@ -145,6 +145,30 @@
         <div class="field"><label for="digest_time" class="dim" style="font-weight:500">Morning digest at (24-hour)</label><input id="digest_time" name="digest_time" type="text" value="{{ followup.digest_time }}" placeholder="07:30"></div>
       </div>
     </div>
+    <div class="field"><label>Messages to leads
+      <span class="info" tabindex="0" role="button" aria-label="How messages to leads work">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5M10 6.3v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="tip">
+          <strong>Texts (or emails, when there is no phone) sent to the lead itself</strong>, from the client's own texting number above so replies land with the client. All transactional; nothing promotional.
+          <br><br><strong>Acknowledgement:</strong> within a minute of a website form (not calls; Meta instant forms only if ticked, because the form must have asked for consent to text).
+          <strong>Out-of-area decline:</strong> only when a full street address geocodes clearly outside the service area; held 15 minutes with a cancel link in the alert, then the lead is marked Lost (out of area). Leads that are merely "possibly" out of area wait for a one-tap decision.
+          <strong>Appointment:</strong> when someone sets an estimate date on the lead.
+          <br><br><strong>Placeholders</strong> you can use in the templates:
+          {% for k, v in placeholders.items() %}<br><code>{{ '{' ~ k ~ '}' }}</code> {{ v }}{% endfor %}
+          <br><br>Leave a template blank to use the default. STOP is always honoured.
+        </span>
+      </span></label>
+      <div class="days" style="margin:0 0 10px">
+        <label class="day"><input type="checkbox" name="msg_ack" {{ 'checked' if lead_msg.ack else '' }}> Acknowledge new form leads</label>
+        <label class="day"><input type="checkbox" name="msg_ack_meta" {{ 'checked' if lead_msg.ack_meta else '' }}> …including Meta instant forms</label>
+        <label class="day"><input type="checkbox" name="msg_auto_decline" {{ 'checked' if lead_msg.auto_decline else '' }}> Automatic out-of-area decline</label>
+        <label class="day"><input type="checkbox" name="msg_appointment" {{ 'checked' if lead_msg.appointment else '' }}> Appointment confirmations</label>
+      </div>
+      <div class="field"><label for="lead_reply_to" class="dim" style="font-weight:500">Reply-to address for emails to leads <span class="dim">(blank = the owner's login email)</span></label><input id="lead_reply_to" name="lead_reply_to" type="email" value="{{ lead_msg.reply_to }}" placeholder="dan@northridgeroofing.ca"></div>
+      <div class="field"><label for="tpl_ack" class="dim" style="font-weight:500">Acknowledgement</label><textarea id="tpl_ack" name="tpl_ack" style="min-height:70px" placeholder="{{ lead_msg_default_templates.ack }}">{{ lead_msg.templates.ack if lead_msg.templates.ack != lead_msg_default_templates.ack else '' }}</textarea></div>
+      <div class="field"><label for="tpl_decline" class="dim" style="font-weight:500">Out-of-area decline</label><textarea id="tpl_decline" name="tpl_decline" style="min-height:70px" placeholder="{{ lead_msg_default_templates.decline }}">{{ lead_msg.templates.decline if lead_msg.templates.decline != lead_msg_default_templates.decline else '' }}</textarea></div>
+      <div class="field"><label for="tpl_appointment" class="dim" style="font-weight:500">Appointment confirmation</label><textarea id="tpl_appointment" name="tpl_appointment" style="min-height:70px" placeholder="{{ lead_msg_default_templates.appointment }}">{{ lead_msg.templates.appointment if lead_msg.templates.appointment != lead_msg_default_templates.appointment else '' }}</textarea></div>
+    </div>
     <label class="check"><input type="checkbox" name="is_active" {{ 'checked' if tenant.is_active else '' }}> Active (intake accepts leads, reminders run)</label>
     <button class="btn" type="submit" style="margin-top:8px">Save settings</button>
   </form>

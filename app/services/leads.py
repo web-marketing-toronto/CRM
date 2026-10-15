@@ -295,14 +295,14 @@ def get_lead(conn: psycopg.Connection, lead_id: UUID) -> dict | None:
 
 def log_touch(
     conn: psycopg.Connection, lead: dict, type_: ActivityType, *, actor_id: UUID | None, actor_label: str, note: str | None = None,
-    now: datetime | None = None,
+    now: datetime | None = None, detail: dict[str, Any] | None = None,
 ) -> None:
     """Record a call/text/email attempt. A New lead becomes Contacted; the last-touch clock resets."""
     if type_ not in TOUCH_TYPES:
         raise LeadError("not a touch type")
     tenant_id = lead["tenant_id"]
     now = now or datetime.now(UTC)
-    log_activity(conn, tenant_id, lead["id"], type_, actor_id=actor_id, actor_label=actor_label, body=note, occurred_at=now)
+    log_activity(conn, tenant_id, lead["id"], type_, actor_id=actor_id, actor_label=actor_label, body=note, detail=detail, occurred_at=now)
     sets = ["last_touch_at = %s", "next_action_at = NULL", "flags = flags - 'needs_review'"]
     params: list[Any] = [now]
     if lead["first_contact_at"] is None:

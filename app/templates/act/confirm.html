@@ -14,7 +14,7 @@
       {% for r in LostReason %}<option value="{{ r.value }}">{{ LOST_REASON_LABELS[r] }}</option>{% endfor %}
     </select></div>
   {% endif %}
-  <button class="btn hivis block" type="submit">{% if action == 'won' %}Mark won{% elif action == 'lost' %}Mark lost{% elif action.startswith('snooze') %}Snooze{% elif action == 'keep' %}Keep trying{% else %}Yes, I {{ action }}ed them{% endif %}</button>
+  <button class="btn hivis block" type="submit">{% if action == 'won' %}Mark won{% elif action == 'lost' %}Mark lost{% elif action.startswith('snooze') %}Snooze{% elif action == 'keep' %}Keep trying{% elif action == 'keep_area' %}Yes, we serve this address{% elif action == 'decline_now' %}Decline and send the message{% else %}Yes, I {{ action }}ed them{% endif %}</button>
 </form>
 <p class="dim" style="margin-top:16px;font-size:13px">Signed in as {{ user.name }}. <a href="/leads/{{ lead.id }}">Open the lead in the app</a> for notes and details.</p>
 {% endblock %}

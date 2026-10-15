@@ -154,6 +154,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .hint { font-size: 13px; color: var(--ink-2); margin-top: 8px; }
 .next-up { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; background: var(--paper); border-radius: var(--radius); font-size: 14px; }
 .next-up .snooze { display: flex; gap: 6px; }
+.area-box { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--alert-soft); border-left: 4px solid var(--alert); font-size: 14px; }
+.area-box .area-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.appt { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.appt label { margin-right: 4px; }
+.appt input[type="datetime-local"] { min-height: 40px; padding: 6px 10px; }
+.appt-set { font-weight: 600; }
+.timeline .body.bubble { border-radius: 10px; padding: 8px 12px; margin-top: 4px; max-width: 520px; white-space: pre-wrap; }
+.timeline .body.bubble.out { background: var(--on-soft); }
+.timeline .body.bubble.in { background: var(--paper); border: 1px solid var(--line); }
 .followup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 14px; }
 
 .status { display: flex; flex-direction: column; gap: 10px; }

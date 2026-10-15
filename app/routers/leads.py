@@ -17,7 +17,7 @@ from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
 from app.models import ActivityType, LeadStatus, LostReason, Platform
-from app.services import followup
+from app.services import followup, lead_messages
 from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
@@ -122,12 +122,14 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         ).fetchall()
         tenant = conn.execute("SELECT job_types FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
         next_reminder = conn.execute(
-            "SELECT rule, due_at FROM reminder WHERE lead_id = %s AND sent_at IS NULL AND cancelled_at IS NULL AND rule <> 'escalation' ORDER BY due_at LIMIT 1",
+            "SELECT rule, due_at FROM reminder WHERE lead_id = %s AND sent_at IS NULL AND cancelled_at IS NULL AND rule NOT IN ('escalation', 'ack', 'decline', 'appointment') ORDER BY due_at LIMIT 1",
             (lead_id,),
         ).fetchone()
+        full_tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
     return {
         "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),
+        "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
     }
 
 
@@ -195,6 +197,7 @@ def status(
     deal_value: Annotated[str, Form()] = "",
     lost_reason: Annotated[str, Form()] = "",
     note: Annotated[str, Form()] = "",
+    send_decline: Annotated[str, Form()] = "",
 ):
     try:
         new_status = LeadStatus(status)
@@ -219,13 +222,75 @@ def status(
         if lead is None:
             raise HTTPException(status_code=404, detail="Lead not found")
         try:
-            svc.change_status(
-                conn, lead, new_status, actor_id=principal.user_id, actor_label=principal.label,
-                deal_value=value, lost_reason=reason, note=note.strip() or None,
-            )
+            if new_status == LeadStatus.LOST and reason == LostReason.OUT_OF_AREA and send_decline == "on":
+                tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+                lead_messages.decline_now(conn, tenant, lead, actor_id=principal.user_id, actor_label=principal.label)
+            else:
+                svc.change_status(
+                    conn, lead, new_status, actor_id=principal.user_id, actor_label=principal.label,
+                    deal_value=value, lost_reason=reason, note=note.strip() or None,
+                )
         except svc.LeadError as exc:
             return _respond(request, principal, lead_id, error=str(exc))
     return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/text", dependencies=[Depends(check_csrf)])
+def text_lead(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], body: Annotated[str, Form()] = ""):
+    """A text typed in the app, sent from the client's number so the thread stays in one place."""
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        try:
+            lead_messages.send_text(conn, tenant, lead, body, actor_id=principal.user_id, actor_label=principal.label)
+        except svc.LeadError as exc:
+            return _respond(request, principal, lead_id, error=str(exc))
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/appointment", dependencies=[Depends(check_csrf)])
+def appointment(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], when: Annotated[str, Form()] = ""):
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        at: datetime | None = None
+        if when.strip():
+            try:
+                at = datetime.fromisoformat(when.strip()).replace(tzinfo=followup.tz_for(tenant))
+            except ValueError:
+                return _respond(request, principal, lead_id, error="Pick a date and time for the appointment")
+        lead_messages.set_appointment(conn, tenant, lead, at, actor_id=principal.user_id, actor_label=principal.label)
+    background_dispatch(lead_id)
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/area", dependencies=[Depends(check_csrf)])
+def area_decision(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], decision: Annotated[str, Form()]):
+    """One tap on a flagged lead: decline (message + Lost) or keep (clear the flag, acknowledge)."""
+    if decision not in ("decline", "keep"):
+        raise HTTPException(status_code=400, detail="unknown decision")
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        if decision == "decline":
+            lead_messages.decline_now(conn, tenant, lead, actor_id=principal.user_id, actor_label=principal.label)
+        else:
+            lead_messages.cancel_auto_decline(conn, tenant, lead, actor_id=principal.user_id, actor_label=principal.label)
+    background_dispatch(lead_id)
+    return _respond(request, principal, lead_id)
+
+
+def background_dispatch(lead_id: UUID) -> None:
+    """Send what the action just made due (an acknowledgement, an appointment confirmation)."""
+    from app.services import worker
+
+    worker.dispatch_lead_now(lead_id)
 
 
 @router.post("/leads/{lead_id}/snooze", dependencies=[Depends(check_csrf)])

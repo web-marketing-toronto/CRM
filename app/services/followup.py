@@ -50,7 +50,8 @@ DEFAULTS: dict[str, Any] = {
     "ignored_before_escalation": 2,
 }
 
-CLIENT_RULES = ("new_alert", "nudge", "cadence", "reply_nudge", "replied", "resubmit", "close_loop", "snoozed")
+CLIENT_RULES = ("new_alert", "nudge", "cadence", "reply_nudge", "replied", "resubmit", "close_loop", "snoozed", "after_appointment")
+LEAD_FACING_RULES = ("ack", "decline", "appointment")
 
 
 def settings_for(tenant: dict) -> dict[str, Any]:
@@ -144,6 +145,9 @@ def on_lead_created(conn: psycopg.Connection, tenant: dict, lead: dict, *, now: 
     cancel(conn, lid)
     if alert:
         schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="new_alert", due_at=now, key=f"{lid}:new_alert:{_ts(base)}")
+        from app.services import lead_messages
+
+        lead_messages.plan_for_new_lead(conn, tenant, lead, now=now)
     for i, hours in enumerate(cfg["nudge_hours"], start=1):
         schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="nudge", due_at=next_business_time(base + timedelta(hours=float(hours)), tenant), key=f"{lid}:nudge:{i}:{_ts(base)}", payload={"n": i})
     schedule(conn, tenant_id=tid, lead_id=lid, user_id=None, rule="escalation", due_at=base + timedelta(hours=float(cfg["escalate_after_hours"])), key=f"{lid}:escalation:new:{_ts(base)}", payload={"why": "untouched"})
@@ -291,15 +295,40 @@ CODES_SHORT = "Reply 1 called, 2 texted, 3 emailed, 4 snooze 1 day."
 CODES_FULL = "Reply 1 called, 2 texted, 3 emailed, 4 snooze 1 day, 5 snooze 3 days."
 
 
-def compose(rule: str, lead: dict, tenant: dict, payload: dict, now: datetime) -> tuple[str, str, str]:
+def _area_note(lead: dict, tenant: dict, user: dict | None) -> str:
+    flags = lead.get("flags") or {}
+    if flags.get("auto_decline_at"):
+        try:
+            at = datetime.fromisoformat(flags["auto_decline_at"]).astimezone(tz_for(tenant)).strftime("%-I:%M %p")
+        except ValueError:
+            at = "15 minutes"
+        note = f" OUTSIDE SERVICE AREA: an automatic 'we don't serve that area' message goes out at {at} unless you cancel"
+        if user is not None:
+            return note + f" here: {action_link(lead['id'], user['id'], 'keep_area')} "
+        return note + "."
+    if flags.get("possibly_out_of_area") or lead.get("area_status") == "out":
+        return " POSSIBLY OUT OF AREA: check the address; decline from the lead page if so."
+    if lead.get("area_status") == "near":
+        return " Near the edge of the service area."
+    return ""
+
+
+def compose(rule: str, lead: dict, tenant: dict, payload: dict, now: datetime, user: dict | None = None) -> tuple[str, str, str]:
     """(sms_text, email_subject, email_text) for a client-facing reminder."""
     who = _lead_line(lead)
     contact = _contact_line(lead)
     url = _lead_url(lead["id"])
     src = PLATFORM_LABELS.get(Platform(lead.get("platform", "unknown")), "")
     if rule == "new_alert":
-        sms = f"New lead: {who}, via {src}. {contact}. {CODES_SHORT}"
-        return sms, f"New lead: {who}", f"{who}\nSource: {src}\n{contact}\n\n{(lead.get('message') or '').strip()}\n\nOpen: {url}"
+        area = _area_note(lead, tenant, user)
+        missed = " MISSED CALL, call back now." if (lead.get("flags") or {}).get("missed_call") else ""
+        sms = f"New lead: {who}, via {src}.{missed}{area} {contact}. {CODES_SHORT}"
+        return sms, f"New lead: {who}", f"{who}\nSource: {src}{missed}{area}\n{contact}\n\n{(lead.get('message') or '').strip()}\n\nOpen: {url}"
+    if rule == "after_appointment":
+        when = lead.get("appointment_at")
+        at = when.astimezone(tz_for(tenant)).strftime("%a %-I:%M %p") if when else "today"
+        sms = f"How did the appointment with {who} ({at}) go? Mark it Quoted in the app, or reply W 8500 if won, L if lost, K to keep following up."
+        return sms, f"After the appointment: {who}", f"The appointment with {who} was {at}. Update the lead: Quoted, Won (with the value) or Lost.\n\nOpen: {url}"
     if rule == "nudge":
         age = _rel(lead.get("created_at"), now)
         sms = f"Still waiting: {who} came in {age} and hasn't been contacted. {contact}. Reply 1/2/3 when you reach out."
@@ -352,6 +381,12 @@ def _email_html(title: str, body_text: str, lead: dict, user: dict | None, rule:
 
     lines = "".join(f"<p style='margin:0 0 10px;font-size:15px;line-height:1.45'>{escape(line)}</p>" for line in body_text.split("\n") if line.strip())
     buttons = ""
+    flags = lead.get("flags") or {}
+    if user is not None and rule == "new_alert" and flags.get("auto_decline_at"):
+        buttons += f"<a href='{action_link(lead['id'], user['id'], 'keep_area')}' style='display:inline-block;margin:0 8px 8px 0;padding:11px 16px;background:#1d5fd1;color:#fff;font-weight:700;border-radius:6px;text-decoration:none'>Cancel the decline, we serve this</a>"
+    elif user is not None and rule == "new_alert" and (flags.get("possibly_out_of_area") or lead.get("area_status") == "out"):
+        buttons += f"<a href='{action_link(lead['id'], user['id'], 'decline_now')}' style='display:inline-block;margin:0 8px 8px 0;padding:11px 16px;background:#e6e8e3;color:#4f5a66;font-weight:700;border-radius:6px;text-decoration:none'>Decline: out of area</a>"
+        buttons += f"<a href='{action_link(lead['id'], user['id'], 'keep_area')}' style='display:inline-block;margin:0 8px 8px 0;padding:11px 16px;background:#1d5fd1;color:#fff;font-weight:700;border-radius:6px;text-decoration:none'>It's in our area</a>"
     if user is not None and rule in ("new_alert", "nudge", "cadence", "reply_nudge", "snoozed", "replied", "resubmit"):
         acts = [("call", "I called"), ("text", "I texted"), ("email", "I emailed"), ("snooze1", "Snooze 1 day")]
         buttons = "".join(
@@ -385,7 +420,9 @@ class DispatchStats:
 def _send_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict, reminder_id: UUID, kind: str, sms: str, subject: str, text: str, html: str) -> bool:
     any_ok = False
     if user.get("notify_sms") and user.get("mobile_e164"):
-        r = messaging.send_sms(conn, to=user["mobile_e164"], body=sms, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id, from_=tenant.get("twilio_number") or get_settings().twilio_agency_from)
+        # Reminders to clients are the agency talking; they come from the agency number. The client's own
+        # number is reserved for conversations with leads.
+        r = messaging.send_sms(conn, to=user["mobile_e164"], body=sms, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id, from_=get_settings().twilio_agency_from)
         any_ok = any_ok or r.ok
     if user.get("notify_email") or (not any_ok and user.get("email")):
         r = messaging.send_email(conn, to=user["email"], subject=subject, text=text, html=html, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id)
@@ -425,6 +462,13 @@ def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_
             conn.execute("UPDATE reminder SET cancelled_at = now() WHERE id = %s", (r["id"],))
             stats.cancelled += 1
             continue
+        if rule in LEAD_FACING_RULES:
+            from app.services import lead_messages
+
+            lead_messages.dispatch(conn, r, tenant, lead, now=now)
+            conn.execute("UPDATE reminder SET sent_at = %s WHERE id = %s", (now, r["id"]))
+            stats.sent += 1
+            continue
         if rule == "escalation":
             if payload.get("why") == "untouched" and (lead["status"] != LeadStatus.NEW.value or lead["last_touch_at"]):
                 conn.execute("UPDATE reminder SET cancelled_at = now() WHERE id = %s", (r["id"],))
@@ -441,14 +485,15 @@ def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_
             stats.escalations += 1
             continue
 
-        sms, subject, text = compose(rule, lead, tenant, payload, now)
         recipients = _recipients(conn, tenant["id"], lead.get("assigned_to"))
         sent_any = False
+        sms, subject, text = compose(rule, lead, tenant, payload, now)
         for user in recipients:
+            sms, subject, text = compose(rule, lead, tenant, payload, now, user)
             html = _email_html(subject, text, lead, user, rule)
             sent_any = _send_to_user(conn, user, tenant, lead, r["id"], "alert" if rule in ("new_alert", "replied", "resubmit") else "reminder", sms, subject, text, html) or sent_any
         conn.execute("UPDATE reminder SET sent_at = %s WHERE id = %s", (now, r["id"]))
-        if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed"):
+        if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed", "after_appointment"):
             lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.REMINDER_SENT, body=subject, detail={"rule": rule, **payload, "delivered": sent_any}, occurred_at=now)
         if rule == "cadence":
             conn.execute("UPDATE lead SET next_action_at = %s WHERE id = %s", (now, lead["id"]))
@@ -522,7 +567,7 @@ def run_digests(conn: psycopg.Connection, *, now: datetime | None = None) -> int
             if user.get("notify_email"):
                 messaging.send_email(conn, to=user["email"], subject=subject, text=text, html=html, kind="digest", tenant_id=tenant["id"], user_id=user["id"])
             if user.get("notify_sms") and user.get("mobile_e164"):
-                messaging.send_sms(conn, to=user["mobile_e164"], body=sms, kind="digest", tenant_id=tenant["id"], user_id=user["id"], from_=tenant.get("twilio_number"))
+                messaging.send_sms(conn, to=user["mobile_e164"], body=sms, kind="digest", tenant_id=tenant["id"], user_id=user["id"])
             sent += 1
     sent += _agency_digest(conn, now)
     return sent
@@ -680,4 +725,14 @@ def apply_action(conn: psycopg.Connection, user: dict, lead: dict, action: str, 
     if action == "keep":
         on_keep_trying(conn, tenant, lead, now=now)
         return f"Another round of reminders for {name}."
+    from app.services import lead_messages
+
+    if action == "keep_area":
+        return cancel_auto_decline_text(lead_messages.cancel_auto_decline(conn, tenant, lead, actor_id=user["id"], actor_label=user["name"], now=now), name)
+    if action == "decline_now":
+        return lead_messages.decline_now(conn, tenant, lead, actor_id=user["id"], actor_label=user["name"], now=now)
     raise ValueError("unknown action")
+
+
+def cancel_auto_decline_text(message: str, name: str) -> str:
+    return f"{name}: {message}"

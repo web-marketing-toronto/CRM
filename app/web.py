@@ -58,7 +58,12 @@ def _relative(dt: datetime | None, now: datetime | None = None) -> str:
     return dt.strftime("%b %-d, %Y")
 
 
-def _local(dt: datetime | None, tz: str = "America/Toronto", fmt: str = "%b %-d, %-I:%M %p") -> str:
+def _local(dt: datetime | str | None, tz: str = "America/Toronto", fmt: str = "%b %-d, %-I:%M %p") -> str:
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt)
+        except ValueError:
+            return dt
     if dt is None:
         return ""
     return dt.astimezone(ZoneInfo(tz)).strftime(fmt)

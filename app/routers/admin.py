@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import followup, importer
+from app.services import followup, importer, lead_messages
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -110,6 +110,9 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "job_types_text": "\n".join(tenant["job_types"] or []),
         "followup": followup.settings_for(tenant),
         "followup_defaults": followup.DEFAULTS,
+        "lead_msg": lead_messages.settings_for(tenant),
+        "lead_msg_default_templates": lead_messages.TEMPLATES,
+        "placeholders": lead_messages.PLACEHOLDERS,
     }
 
 
@@ -193,6 +196,31 @@ def parse_followup(form) -> dict:
     }
 
 
+def parse_lead_messaging(form) -> dict:
+    templates = {}
+    for key in ("ack", "decline", "appointment"):
+        text = str(form.get(f"tpl_{key}") or "").strip()
+        if text and text != lead_messages.TEMPLATES[key]:
+            try:
+                lead_messages.render(text, {})
+            except (KeyError, ValueError, IndexError) as exc:
+                raise ValueError(f"The {key} message template has a problem near a {{placeholder}}: {exc}") from exc
+            if len(text) > 1000:
+                raise ValueError(f"The {key} message is too long for a text (1000 characters max)")
+            templates[key] = text
+    reply_to = str(form.get("lead_reply_to") or "").strip()
+    if reply_to and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", reply_to):
+        raise ValueError("The reply-to address for lead emails doesn't look like an email address")
+    return {
+        "ack": form.get("msg_ack") == "on",
+        "ack_meta": form.get("msg_ack_meta") == "on",
+        "auto_decline": form.get("msg_auto_decline") == "on",
+        "appointment": form.get("msg_appointment") == "on",
+        "reply_to": reply_to,
+        "templates": templates,
+    }
+
+
 @router.get("/tenants/{tenant_id}")
 def tenant_detail(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)], error: str | None = None, notice: str | None = None):
     return web.render(request, "admin/tenant.html", error=error, notice=notice, new_user_password=None, **_tenant_ctx(tenant_id))
@@ -216,6 +244,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
     types = [t.strip() for t in re.split(r"[\n,]", get("job_types")) if t.strip()]
     try:
         followup_cfg = parse_followup(form)
+        lead_msg_cfg = parse_lead_messaging(form)
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     default_assignee = get("default_assignee_id") or None
@@ -232,7 +261,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                 get("name") or "Client", get("timezone") or "America/Toronto", Jsonb(field_map), Jsonb(service_area),
                 Jsonb(business_hours), types,
                 UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on",
-                Jsonb({"followup": followup_cfg}), tenant_id,
+                Jsonb({"followup": followup_cfg, "lead_messaging": lead_msg_cfg}), tenant_id,
             ),
         )
         auth_service.audit(conn, action="tenant_updated", user_id=principal.user_id, tenant_id=tenant_id, target_type="tenant", target_id=str(tenant_id))

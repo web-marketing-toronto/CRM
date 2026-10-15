@@ -74,12 +74,12 @@ def _twilio_send(to: str, from_: str, body: str) -> SendResult:
     return SendResult(True, "twilio", provider_id=r.json().get("sid"))
 
 
-def _postmark_send(to: str, subject: str, text: str, html: str | None, reply_to: str | None) -> SendResult:
+def _postmark_send(to: str, subject: str, text: str, html: str | None, reply_to: str | None, from_name: str | None = None) -> SendResult:
     s = get_settings()
     if not s.postmark_token:
         return SendResult(False, "postmark", error="Postmark token is not configured")
     payload: dict[str, Any] = {
-        "From": f"{s.email_from_name} <{s.email_from}>", "To": to, "Subject": subject, "TextBody": text,
+        "From": f"{from_name or s.email_from_name} <{s.email_from}>", "To": to, "Subject": subject, "TextBody": text,
         "MessageStream": "outbound",
     }
     if html:
@@ -99,7 +99,7 @@ def _postmark_send(to: str, subject: str, text: str, html: str | None, reply_to:
     return SendResult(True, "postmark", provider_id=r.json().get("MessageID"))
 
 
-def _sendgrid_send(to: str, subject: str, text: str, html: str | None, reply_to: str | None) -> SendResult:
+def _sendgrid_send(to: str, subject: str, text: str, html: str | None, reply_to: str | None, from_name: str | None = None) -> SendResult:
     s = get_settings()
     if not s.sendgrid_api_key:
         return SendResult(False, "sendgrid", error="SendGrid key is not configured")
@@ -108,7 +108,7 @@ def _sendgrid_send(to: str, subject: str, text: str, html: str | None, reply_to:
         content.append({"type": "text/html", "value": html})
     payload: dict[str, Any] = {
         "personalizations": [{"to": [{"email": to}]}],
-        "from": {"email": s.email_from, "name": s.email_from_name},
+        "from": {"email": s.email_from, "name": from_name or s.email_from_name},
         "subject": subject,
         "content": content,
     }
@@ -189,15 +189,16 @@ def send_email(
     user_id: UUID | None = None,
     reminder_id: UUID | None = None,
     reply_to: str | None = None,
+    from_name: str | None = None,
 ) -> SendResult:
     s = get_settings()
     log_id = _log(conn, tenant_id=tenant_id, lead_id=lead_id, user_id=user_id, reminder_id=reminder_id, direction="out", channel="email", kind=kind, to_addr=to, from_addr=s.email_from, subject=subject, body=text, provider=s.email_provider)
     if s.email_provider == "postmark":
-        result = _postmark_send(to, subject, text, html, reply_to)
+        result = _postmark_send(to, subject, text, html, reply_to, from_name)
     elif s.email_provider == "sendgrid":
-        result = _sendgrid_send(to, subject, text, html, reply_to)
+        result = _sendgrid_send(to, subject, text, html, reply_to, from_name)
     elif s.email_provider == "fake":
-        outbox.email.append({"to": to, "subject": subject, "text": text, "html": html, "kind": kind, "lead_id": lead_id, "user_id": user_id, "tenant_id": tenant_id})
+        outbox.email.append({"to": to, "subject": subject, "text": text, "html": html, "kind": kind, "lead_id": lead_id, "user_id": user_id, "tenant_id": tenant_id, "reply_to": reply_to, "from_name": from_name})
         result = SendResult(True, "fake", provider_id=f"fake-email-{log_id}")
     else:
         log.info("EMAIL to %s [%s] %s: %s", to, kind, subject, text[:200])

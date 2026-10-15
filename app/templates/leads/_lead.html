@@ -18,8 +18,8 @@
         <span class="chip">{{ lead.channel | channel_label }}</span>
         {% if lead.campaign_name %}<span class="chip">{{ lead.campaign_name }}</span>{% endif %}
         {% if lead.flags.missed_call %}<span class="chip flag">Missed call</span>{% endif %}
-        {% if lead.area_status == 'out' %}<span class="chip flag">Outside service area</span>
-        {% elif lead.flags.possibly_out_of_area %}<span class="chip flag">Possibly out of area</span>
+        {% if lead.flags.possibly_out_of_area %}<span class="chip flag">Possibly out of area</span>
+        {% elif lead.area_status == 'out' %}<span class="chip flag">Outside service area</span>
         {% elif lead.area_status == 'near' %}<span class="chip">Near edge of area</span>{% endif %}
         <span class="dim" style="font-size:13px">{{ lead.created_at | local(tz) }}</span>
       </div>
@@ -31,6 +31,19 @@
 
   {% if lead.message %}
   <div class="message"><div class="label">Their message</div>{{ lead.message }}</div>
+  {% endif %}
+
+  {% if lead.status not in ('won', 'lost') and (lead.flags.auto_decline_at or lead.flags.possibly_out_of_area or lead.area_status == 'out') %}
+  <div class="area-box">
+    <div>
+      {% if lead.flags.auto_decline_at %}<strong>Outside the service area.</strong> An automatic "we don't serve that area" message goes to them at {{ lead.flags.auto_decline_at | local(tz, '%-I:%M %p') }} unless you cancel.
+      {% else %}<strong>Possibly outside the service area.</strong> Check the address, then decide.{% endif %}
+    </div>
+    <div class="area-actions">
+      <form method="post" action="/leads/{{ lead.id }}/area" hx-post="/leads/{{ lead.id }}/area" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="decision" value="keep"><button class="btn small" type="submit">{% if lead.flags.auto_decline_at %}Cancel: we serve this{% else %}It's in our area{% endif %}</button></form>
+      <form method="post" action="/leads/{{ lead.id }}/area" hx-post="/leads/{{ lead.id }}/area" hx-target="#lead" hx-swap="outerHTML" style="display:contents" onsubmit="return confirm('Send them the out-of-area message and mark this lead Lost?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="decision" value="decline"><button class="btn ghost small" type="submit">{% if lead.flags.auto_decline_at %}Decline now{% else %}Decline: out of area{% endif %}</button></form>
+    </div>
+  </div>
   {% endif %}
 
   <div>
@@ -74,6 +87,40 @@
     {% endif %}
   </div>
 
+  {% if lead.phone_e164 and lead.status not in ('won', 'lost') %}
+  <div>
+    {% if lead.sms_opt_out %}
+      <div class="hint">They texted STOP, so the CRM won't text this number. You can still call.</div>
+    {% elif can_text %}
+      <form class="note-form" method="post" action="/leads/{{ lead.id }}/text" hx-post="/leads/{{ lead.id }}/text" hx-target="#lead" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="body" placeholder="Text {{ (lead.contact_name or 'them').split(' ')[0] }} from here: Hi, this is {{ principal.user.name.split(' ')[0] }} at {{ principal.tenant.name }}…" required maxlength="1200"></textarea>
+        <button class="btn hivis" type="submit">Send text</button>
+      </form>
+      <div class="hint">Sent from {{ texting_number | phone }}; their replies show up below and alert you.</div>
+    {% else %}
+      <div class="hint">Texting from the app needs a texting number for {{ principal.tenant.name }} (ask {{ settings.agency_name }}). The Text button above uses your own phone.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if lead.status not in ('won', 'lost') %}
+  <div>
+    <form class="appt" method="post" action="/leads/{{ lead.id }}/appointment" hx-post="/leads/{{ lead.id }}/appointment" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="appt-when" style="font-weight:600">Estimate / appointment</label>
+      {% if lead.appointment_at %}
+        <span class="appt-set">{{ lead.appointment_at | local(tz, '%a %b %-d, %-I:%M %p') }}</span>
+        <button class="btn ghost small" type="submit" name="when" value="">Clear</button>
+      {% else %}
+        <input id="appt-when" name="when" type="datetime-local" required>
+        <button class="btn ghost small" type="submit">Set</button>
+        <span class="dim" style="font-size:13px">They get a confirmation text; reminders pause until after the visit.</span>
+      {% endif %}
+    </form>
+  </div>
+  {% endif %}
+
   <div class="status">
     {% if lead.status == 'won' %}
       <div class="closed-note won">Won{% if lead.deal_value %} · {{ lead.deal_value | money }}{% endif %}{% if lead.won_at %} · {{ lead.won_at | local(tz, '%b %-d') }}{% endif %}</div>
@@ -102,10 +149,11 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="status" value="lost">
       <label for="lost_reason" style="font-weight:600">Why</label>
-      <select id="lost_reason" name="lost_reason" required>
+      <select id="lost_reason" name="lost_reason" required onchange="document.getElementById('decline-opt').style.display = this.value === 'out_of_area' ? 'flex' : 'none'">
         <option value="">Pick a reason</option>
         {% for r in LostReason %}<option value="{{ r.value }}">{{ LOST_REASON_LABELS[r] }}</option>{% endfor %}
       </select>
+      <label id="decline-opt" class="check" style="display:none;flex-basis:100%;font-size:14px"><input type="checkbox" name="send_decline" checked> Let them know we don't serve that area{% if not lead.phone_e164 and not lead.email %} (no phone or email on file){% endif %}</label>
       <button class="btn" type="submit">Mark lost</button>
     </form>
   </div>
@@ -140,10 +188,13 @@
             {% elif a.type == 'created' %}Lead received <span class="who">via {{ a.detail.channel | channel_label }}{% if a.detail.platform and a.detail.platform != 'unknown' %}, {{ a.detail.platform | platform_label }}{% endif %}</span>
             {% elif a.type == 'assignment' %}Assigned <span class="who">{% if a.detail.how == 'default' %}automatically{% else %}by {{ a.actor_label }}{% endif %}</span>
             {% elif a.type == 'reminder_sent' %}Reminder sent <span class="who">{{ a.body }}</span>
+            {% elif a.type == 'auto_message' %}Automatic {{ 'text' if a.detail.channel in ('twilio', 'fake', 'log') and a.detail.kind != 'email' else 'message' }} to them{% if not a.detail.delivered %} <span class="who">(not delivered{% if a.detail.error %}: {{ a.detail.error }}{% endif %})</span>{% endif %}
+            {% elif a.type == 'appointment' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted from the app <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation') %}<div class="body">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment') %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>
