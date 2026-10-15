@@ -202,7 +202,7 @@ def test_cron_tick_requires_secret(client):
 
 
 def test_healthz(client):
-    assert client.get("/healthz").json() == {"ok": True, "db": True}
+    assert client.get("/health").json() == {"ok": True, "db": True}
 
 
 def test_business_hours_parse():

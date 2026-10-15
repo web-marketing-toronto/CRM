@@ -8,7 +8,7 @@ from app.db import system_db
 router = APIRouter()
 
 
-@router.get("/healthz")
+@router.get("/health")
 def healthz():
     try:
         with system_db() as conn:

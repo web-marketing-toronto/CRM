@@ -49,4 +49,4 @@ fi
 
 echo
 echo "Deployed: $NEW_URL"
-echo "Health:   $NEW_URL/healthz"
+echo "Health:   $NEW_URL/health"

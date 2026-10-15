@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def _http_error(request: Request, exc: HTTPException):
-        if request.url.path.startswith(("/v1/", "/internal/", "/healthz")) or request.headers.get("hx-request"):
+        if request.url.path.startswith(("/v1/", "/internal/", "/health")) or request.headers.get("hx-request"):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         if exc.status_code == 409 and exc.detail == "Pick a client first":
             return RedirectResponse("/admin", status_code=303)

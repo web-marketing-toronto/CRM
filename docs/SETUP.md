@@ -28,7 +28,7 @@ bash deploy/deploy.sh
 
 Cloud Build builds the container from the `Dockerfile`, Cloud Run starts it (migrations run on boot),
 and a Cloud Scheduler job starts calling `/internal/cron/tick` every minute. The script prints the
-service URL at the end; `/healthz` on that URL should return `{"ok": true, "db": true}`.
+service URL at the end; `/health` on that URL should return `{"ok": true, "db": true}`.
 
 ## 3. Create your agency login
 
