@@ -6,9 +6,13 @@ A lead CRM for Web Marketing Toronto's contractor clients. It does three things:
    Zapier, and manual entry all post to one intake endpoint, which normalizes, dedupes, geocodes and
    records the click IDs needed later for ad-platform feedback.
 2. **Makes the client follow up**: a phone-first app with a lead list, five status buttons, tap-to-call
-   logging, and (phase 2) SMS and email reminders that don't stop until the lead is won or lost.
-3. **Feeds outcomes back to Google Ads and Meta** (phase 3) so campaigns optimize toward revenue, and
-   reports cost per lead and cost per won deal by channel (phase 4).
+   logging, SMS and email reminders with reply codes that don't stop until the lead is won or lost,
+   escalations to the agency, a morning digest, and transactional texts to the lead (acknowledgement,
+   out-of-area decline, appointment confirmation, two-way texting from the app).
+3. **Feeds outcomes back to Google Ads and Meta** (Qualified lead and Closed won, retried and visible per
+   lead) so campaigns optimize toward revenue, pulls spend nightly, and reports cost per lead and cost per
+   won deal by source and campaign, speed to lead, follow-up compliance and lead quality, with CSV export
+   and a monthly PDF.
 
 The full specification lives in the Claude doc "Contractor CRM — Build Spec".
 
@@ -29,11 +33,14 @@ app/
   migrate.py        SQL migration runner (python -m app.migrate)
   cli.py            create-admin, seed-demo
   auth/             passwords, TOTP, sessions, request principals
-  services/         normalize, attribution, geo, leads, worker
-  routers/          intake (API), auth, leads, admin, account, cron, health
+  services/         normalize, attribution, geo, leads, importer, messaging (Twilio/Postmark/SendGrid),
+                    followup (the reminder engine), lead_messages (texts to leads), adplatforms + conversions
+                    (Google Ads / Meta uploads and spend), reports, worker (the minute tick)
+  routers/          intake + sources (CallRail, Meta, Google lead forms), twilio (inbound SMS, receipts),
+                    act (one-tap links from emails), auth, leads, reports, admin, account, cron, health
   templates/        Jinja pages; leads/_lead.html is the ticket re-rendered after each action
   static/           app.css, htmx, PWA manifest + service worker, icons
-migrations/         0001_initial.sql ...
+migrations/         0001_initial.sql ... 0004_conversions.sql (applied on boot)
 tests/              pytest against a real Postgres
 deploy/             setup_gcp.sh (one-time), deploy.sh (every release)
 docs/SETUP.md       the steps Jeff runs

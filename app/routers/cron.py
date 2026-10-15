@@ -1,7 +1,7 @@
 """The minute tick that Cloud Scheduler calls.
 
-Phase 2 (follow-up engine) fills `run_tick` in app/services/worker.py. Until then the endpoint
-exists so the scheduler job can be created and verified during setup.
+`worker.run_tick` sends due reminders and digests, uploads pending conversions, and once a day pulls
+ad spend. Everything it does is idempotent, so a double tick is harmless.
 
 Authentication: the service is public (clients use it from their phones), so Cloud Run does not
 verify bearer tokens on our behalf. Cloud Scheduler therefore sends a shared secret in the
