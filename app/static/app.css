@@ -163,9 +163,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .status-row .sbtn:hover { border-color: var(--ink); }
 .status-row .sbtn.on { background: var(--on-soft); color: var(--ink); -webkit-text-fill-color: var(--ink); border: 2px solid var(--signal); cursor: default; opacity: 1; }
-.status-row .sbtn.won { border-color: var(--won); color: var(--won); }
 .status-row .sbtn.won.on { background: var(--won-on); border-color: var(--won); color: var(--ink); -webkit-text-fill-color: var(--ink); }
-.status-row .sbtn.lost { color: var(--ink-2); }
 .status-row .sbtn.lost.on { background: var(--muted-soft); border-color: var(--ink-2); color: var(--ink); -webkit-text-fill-color: var(--ink); }
 .reveal { display: none; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px; background: var(--paper); border-radius: var(--radius); }
 .reveal.open { display: flex; }
