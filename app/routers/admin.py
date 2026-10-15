@@ -102,6 +102,13 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "users": users,
         "recent": recent,
         "intake_url": f"{settings.base_url}/v1/intake/{tenant['slug']}/{tenant['intake_key']}",
+        "callrail_url": f"{settings.base_url}/v1/callrail/{tenant['slug']}/{tenant['intake_key']}",
+        "google_leads_url": f"{settings.base_url}/v1/google-leads/{tenant['slug']}/{tenant['intake_key']}",
+        "meta_webhook_url": f"{settings.base_url}/v1/meta/webhook",
+        "meta_configured": bool(settings.meta_app_secret and settings.meta_access_token),
+        "snippet_url": f"{settings.base_url}/static/wmt.js",
+        "meta_page_id": ((tenant.get("settings") or {}).get("meta") or {}).get("page_id", ""),
+        "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
         "field_map_json": json.dumps(tenant["field_map"], indent=2),
         "service_area_json": json.dumps(tenant["service_area"], indent=2),
         "hours_start": _twelve_hour(hours.get("start", "07:00")),
@@ -245,6 +252,10 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
     try:
         followup_cfg = parse_followup(form)
         lead_msg_cfg = parse_lead_messaging(form)
+        meta_page_id = re.sub(r"\D", "", get("meta_page_id"))
+        call_min = int(get("call_min_seconds") or 30)
+        if not (0 <= call_min <= 600):
+            raise ValueError("Minimum call length should be between 0 and 600 seconds")
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     default_assignee = get("default_assignee_id") or None
@@ -261,7 +272,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                 get("name") or "Client", get("timezone") or "America/Toronto", Jsonb(field_map), Jsonb(service_area),
                 Jsonb(business_hours), types,
                 UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on",
-                Jsonb({"followup": followup_cfg, "lead_messaging": lead_msg_cfg}), tenant_id,
+                Jsonb({"followup": followup_cfg, "lead_messaging": lead_msg_cfg, "meta": {"page_id": meta_page_id}, "callrail": {"min_seconds": call_min}}), tenant_id,
             ),
         )
         auth_service.audit(conn, action="tenant_updated", user_id=principal.user_id, tenant_id=tenant_id, target_type="tenant", target_id=str(tenant_id))

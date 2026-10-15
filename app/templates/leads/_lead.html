@@ -211,6 +211,10 @@
   </div>
   {% endif %}
 
+  {% if source and source.raw_payload and (source.raw_payload.recording_player or source.raw_payload.recording) %}
+  <div><a class="btn ghost small" href="{{ source.raw_payload.recording_player or source.raw_payload.recording }}" target="_blank" rel="noopener">Listen to the call{% if source.raw_payload.call_summary %} ({{ source.raw_payload.call_summary | lower }}){% endif %}</a></div>
+  {% endif %}
+
   {% if source and (source.utm_campaign or source.gclid or source.meta_lead_id or source.landing_page or source.callrail_call_id) %}
   <details>
     <summary class="muted" style="cursor:pointer;font-size:14px">Where this lead came from</summary>

@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     email_from: str = "leads@web-marketing-toronto.com"
     email_from_name: str = "WMT Leads"
 
+    # Lead sources. CallRail signs webhooks with the signing key shown next to the webhook in its settings
+    # (optional; the per-client key in the URL is required regardless). Meta needs the app secret (to
+    # verify X-Hub-Signature-256), the verify token you type into the webhook subscription, and a
+    # system-user access token with leads_retrieval + pages_manage_ads on every client Page.
+    callrail_signing_key: str | None = None
+    meta_app_secret: str | None = None
+    meta_verify_token: str | None = None
+    meta_access_token: str | None = None
+
     # Shared secret for Cloud Scheduler -> /internal/cron/tick when OIDC is not used.
     cron_secret: str | None = None
 

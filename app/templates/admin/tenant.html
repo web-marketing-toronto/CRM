@@ -44,6 +44,35 @@
 <pre class="snippet">curl -X POST '{{ intake_url }}' -H 'Content-Type: application/json' \
   -d '{"name":"Test Lead","phone":"705 555 0100","job_type":"Test","message":"Delete me"}'</pre>
     </details>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Attribution snippet (which ad brought the lead)</summary>
+      <p style="margin-top:10px;font-size:14px">Add this to every page of the client's site, in Google Tag Manager as a <strong>Custom HTML</strong> tag firing on <em>All Pages</em> (or in the theme's footer). It remembers gclid / fbclid / UTMs for 90 days and fills them into every form, so a lead that converts three visits later is still credited to the ad.</p>
+<pre class="snippet">&lt;script src="{{ snippet_url }}" async&gt;&lt;/script&gt;</pre>
+      <p style="font-size:14px"><strong>WordPress forms:</strong> Elementor Pro, WPForms and Gravity post only the fields they know about, so add hidden fields named <code>gclid</code>, <code>fbclid</code>, <code>utm_source</code>, <code>utm_medium</code>, <code>utm_campaign</code>, <code>utm_term</code>, <code>landing_page</code> and <code>referrer</code> to the form (hidden-field type, no default value). The snippet fills them. Forms that post every input (custom HTML, Shopify theme forms) need nothing extra.</p>
+      <p style="font-size:14px"><strong>Wix / Squarespace:</strong> their form builders mostly can't carry hidden fields; those leads arrive as "Website" without the ad detail. Enhanced Conversions (phase 4) still matches them to the ad by email and phone.</p>
+      <p style="font-size:14px"><strong>Also in GTM, once per site:</strong> the Google tag with user-provided data collection on, and the Meta pixel. That is what lets the CRM's Qualified / Won uploads match leads that have no click id.</p>
+    </details>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">CallRail</summary>
+      <p style="margin-top:10px;font-size:14px">In CallRail: <em>Settings → Integrations → Webhooks</em> for this client's company, add a <strong>Post-call</strong> webhook:</p>
+      <dl class="kv"><dt>Webhook URL</dt><dd><code style="user-select:all">{{ callrail_url }}</code></dd></dl>
+      <p style="font-size:14px">Answered calls of {{ call_min_seconds }} s or more become leads (or log on the existing lead for that number, as contact). Missed calls, voicemails and shorter calls become leads flagged <strong>Missed call</strong> with an immediate call-back alert. Calls tagged spam, vendor, solicitor, existing customer, wrong number or not a lead are dropped. The source, campaign, keyword, landing page, gclid and recording link come across with the call. Change the minimum under Settings below.</p>
+    </details>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Google Ads lead form assets</summary>
+      <p style="margin-top:10px;font-size:14px">On the lead form asset in Google Ads, under <em>Lead delivery option → Webhook integration</em>:</p>
+      <dl class="kv"><dt>Webhook URL</dt><dd><code style="user-select:all">{{ google_leads_url }}</code></dd><dt>Key</dt><dd><code style="user-select:all">{{ tenant.intake_key }}</code></dd></dl>
+      <p style="font-size:14px">Use Google's <em>Send test data</em> button; the test lead shows up here named "TEST …" with no messages sent. Campaign, ad group, creative ids and the gclid are carried for conversion matching.</p>
+    </details>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Meta (Facebook / Instagram) lead ads</summary>
+      {% if meta_configured %}
+      <p style="margin-top:10px;font-size:14px">One webhook serves every client; the Page id tells them apart. In the Meta app (Business settings → the WMT CRM app → Webhooks → Page), the callback is <code style="user-select:all">{{ meta_webhook_url }}</code> with the verify token from Secret Manager, subscribed to the <strong>leadgen</strong> field. Then, for this client: add their Page to the system user's assets with <em>leads access</em>, subscribe the Page to the app (<em>Leads Access Manager</em> → assign the CRM), and enter the Page id below under Settings. Instant-form answers are fetched from the Graph API the moment the lead comes in; the standard questions (name, phone, email, address) are recognised, custom questions go through the field map.</p>
+      <p style="font-size:14px">Page id for this client: <strong>{{ meta_page_id or 'not set' }}</strong>. Test with Meta's <em>Lead Ads Testing Tool</em> (business.facebook.com/ads/lead_gen/tool_testing).</p>
+      {% else %}
+      <p style="margin-top:10px;font-size:14px">Not configured yet on the server: it needs <code>crm-meta-app-secret</code>, <code>crm-meta-verify-token</code> and <code>crm-meta-access-token</code> in Secret Manager (see SETUP.md). Until then, Zapier's "Facebook Lead Ads → Webhooks by Zapier" into the intake URL above works, with <code>channel</code> set to <code>meta_lead_ad</code>.</p>
+      {% endif %}
+    </details>
     <form class="inline-form" method="post" action="/admin/tenants/{{ tenant.id }}/rotate-key" onsubmit="return confirm('Generate a new intake key? Every form posting to the old URL stops working until you update it.')" style="display:block;margin-top:12px">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn danger small" type="submit">Generate a new key</button>
     </form>
@@ -87,6 +116,8 @@
       <div class="field"><label for="default_assignee_id">New leads go to</label>
         <select id="default_assignee_id" name="default_assignee_id"><option value="">Nobody (unassigned)</option>{% for u in users if u.is_active %}<option value="{{ u.id }}" {{ 'selected' if tenant.default_assignee_id == u.id else '' }}>{{ u.name }}</option>{% endfor %}</select></div>
       <div class="field"><label for="twilio_number">Their texting number <span class="dim">(Twilio; blank = agency number)</span></label><input id="twilio_number" name="twilio_number" type="tel" value="{{ tenant.twilio_number or '' }}"></div>
+      <div class="field"><label for="meta_page_id">Meta Page id <span class="dim">(for lead ads)</span></label><input id="meta_page_id" name="meta_page_id" type="text" inputmode="numeric" value="{{ meta_page_id }}" placeholder="1234567890"></div>
+      <div class="field"><label for="call_min_seconds">Answered call counts as a lead from <span class="dim">(seconds)</span></label><input id="call_min_seconds" name="call_min_seconds" type="text" inputmode="numeric" value="{{ call_min_seconds }}"></div>
     </div>
     <div class="field"><label for="job_types">Job types <span class="dim">(one per line; shows as a dropdown)</span></label><textarea id="job_types" name="job_types" style="min-height:90px">{{ job_types_text }}</textarea></div>
     <div class="field"><label for="service_area">Service area

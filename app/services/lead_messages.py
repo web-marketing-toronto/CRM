@@ -169,7 +169,7 @@ def plan_for_new_lead(conn: psycopg.Connection, tenant: dict, lead: dict, *, now
     lead = conn.execute("SELECT * FROM lead WHERE id = %s", (lead["id"],)).fetchone() or lead
     channel = lead.get("channel")
     flags = lead.get("flags") or {}
-    if channel in (Channel.CALL.value, Channel.MANUAL.value, Channel.IMPORT.value):
+    if channel in (Channel.CALL.value, Channel.MANUAL.value, Channel.IMPORT.value) or flags.get("test"):
         return
     if channel == Channel.META_LEAD_AD.value and not cfg["ack_meta"]:
         return

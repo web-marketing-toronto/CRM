@@ -33,6 +33,9 @@ os.environ["EMAIL_PROVIDER"] = "fake"
 os.environ["TWILIO_ACCOUNT_SID"] = "ACtest"
 os.environ["TWILIO_AUTH_TOKEN"] = "test-twilio-token"
 os.environ["TWILIO_AGENCY_FROM"] = "+14165550000"
+os.environ["META_APP_SECRET"] = "meta-secret"
+os.environ["META_VERIFY_TOKEN"] = "verify-me"
+os.environ["META_ACCESS_TOKEN"] = "EAAtest"
 os.environ.pop("GOOGLE_MAPS_API_KEY", None)
 
 from app import db as dbmod  # noqa: E402

@@ -68,7 +68,32 @@ skipped and why), then import. Imported leads carry an "Imported, review" tag an
 "To review" tab; they never trigger reminders or texts, and the tag clears the first time the client touches
 them or sets a status.
 
-CallRail, Meta Lead Ads, Google lead forms and the attribution snippet come with the next phase.
+**Attribution snippet**: `https://<service>/static/wmt.js` on every page of the client's site (GTM Custom HTML
+tag on All Pages). It keeps gclid / fbclid / UTMs for 90 days and fills them into every form; WordPress forms
+need hidden fields with those names (the client page lists them). Wix and Squarespace forms mostly can't carry
+them; those leads show as "Website".
+
+**CallRail**: per client, a Post-call webhook to the CallRail URL shown on the client page. Optional: put the
+webhook signing key in Secret Manager as `crm-callrail-signing-key` and redeploy; then every call payload is
+signature-checked. Answered calls of 30 s+ become leads already marked Contacted; missed, voicemail and short
+calls become leads flagged "Missed call" with an immediate alert; calls tagged spam / vendor / solicitor /
+existing customer / wrong number are dropped.
+
+**Google Ads lead forms**: on the form asset, Lead delivery → Webhook: the Google URL and key from the client
+page. Google's "send test data" shows up as a TEST lead with no messages sent.
+
+**Meta Lead Ads** (one app for all clients):
+1. developers.facebook.com → the WMT app (or create one, type Business) → add the Webhooks product →
+   Page → callback `https://<service>/v1/meta/webhook`, verify token = any long random string, subscribe `leadgen`.
+2. Secret Manager: `crm-meta-app-secret` (App settings → Basic), `crm-meta-verify-token` (the string from step 1),
+   `crm-meta-access-token` (a system-user token from Business Settings → System users, with
+   `leads_retrieval`, `pages_manage_ads`, `pages_read_engagement`, `pages_show_list`; add each client Page to the
+   system user's assets). Redeploy.
+3. Per client: subscribe their Page to the app (`POST /{page-id}/subscribed_apps` with `subscribed_fields=leadgen`,
+   or via Leads Access Manager), then enter the Page id on the client's settings page. Test with Meta's
+   Lead Ads Testing Tool.
+Until the app is approved, Zapier's Facebook Lead Ads trigger into the intake URL still works (set
+`channel` to `meta_lead_ad`).
 
 ## 6. Optional: Google Maps key for service-area checks
 

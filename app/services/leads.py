@@ -125,6 +125,7 @@ def create_from_intake(
     user_agent: str | None,
     maps_api_key: str | None,
     now: datetime | None = None,
+    extra_flags: dict[str, Any] | None = None,
 ) -> IntakeResult:
     now = now or datetime.now(UTC)
     tenant_id: UUID = tenant["id"]
@@ -189,7 +190,7 @@ def create_from_intake(
         return IntakeResult(lead_id=lead_id, ref_code=existing["ref_code"], created=False, reopened=reopened, area_status=area_status)
 
     ref_code = next_ref_code(conn, tenant_id)
-    flags: dict[str, Any] = {}
+    flags: dict[str, Any] = dict(extra_flags or {})
     if area_status == AreaStatus.OUT and not precise:
         flags["possibly_out_of_area"] = True
     elif area_status == AreaStatus.NEAR:
