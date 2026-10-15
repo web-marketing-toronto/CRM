@@ -135,6 +135,15 @@
     </ul>
   </div>
 
+  {% if principal.is_agency %}
+  <div style="display:flex;justify-content:flex-end">
+    <form method="post" action="/leads/{{ lead.id }}/delete" onsubmit="return confirm('Delete {{ (lead.contact_name or lead.ref_code) | replace("'", "") }} and everything logged on it? This cannot be undone.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn danger small" type="submit">Delete lead (agency only)</button>
+    </form>
+  </div>
+  {% endif %}
+
   {% if source and (source.utm_campaign or source.gclid or source.meta_lead_id or source.landing_page or source.callrail_call_id) %}
   <details>
     <summary class="muted" style="cursor:pointer;font-size:14px">Where this lead came from</summary>

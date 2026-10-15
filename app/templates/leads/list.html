@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Leads{% endblock %}
 {% block content %}
+{% if request.query_params.get('notice') %}<div class="notice">{{ request.query_params.get('notice') }}</div>{% endif %}
 <nav class="tabs" aria-label="Lead filters">
   <a href="/leads?view=needs_action" class="{{ 'on' if view == 'needs_action' else '' }}">Needs action{% if counts.needs_action %}<span class="n">{{ counts.needs_action }}</span>{% endif %}</a>
   <a href="/leads?view=open" class="{{ 'on' if view == 'open' else '' }}">Open <span class="dim">{{ counts.open }}</span></a>

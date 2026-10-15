@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from app import web
-from app.auth.deps import check_csrf, require_tenant, require_user
+from app.auth import service as auth_service
+from app.auth.deps import check_csrf, require_agency, require_tenant, require_user
 from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
@@ -268,3 +269,19 @@ async def edit(request: Request, lead_id: UUID, principal: Annotated[Principal, 
         )
         svc.log_activity(conn, lead["tenant_id"], lead_id, ActivityType.NOTE, actor_id=principal.user_id, actor_label=principal.label, body="Updated contact details")
     return _respond(request, principal, lead_id)
+
+
+
+@router.post("/leads/{lead_id}/delete", dependencies=[Depends(check_csrf)])
+def delete_lead(lead_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    """Agency only: remove a lead and everything logged on it (tests, spam, duplicates). Clients mark Lost instead."""
+    with db(None, "agency_admin") as conn:
+        lead = conn.execute("SELECT id, tenant_id, ref_code, contact_name, phone_e164, email FROM lead WHERE id = %s", (lead_id,)).fetchone()
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        conn.execute("DELETE FROM lead WHERE id = %s", (lead_id,))
+        auth_service.audit(
+            conn, action="lead_deleted", user_id=principal.user_id, tenant_id=lead["tenant_id"], target_type="lead",
+            target_id=str(lead_id), detail={"ref": lead["ref_code"], "name": lead["contact_name"], "phone": lead["phone_e164"], "email": lead["email"]},
+        )
+    return RedirectResponse("/leads?notice=Lead+deleted", status_code=303)

@@ -234,3 +234,38 @@ def test_agency_click_through_to_lead(client, make_tenant, make_user, admin_conn
     assert "Click Me" in client.get(f"/leads/{lead['lead_id']}").text
     settings_page = client.get(f"/admin/tenants/{t['id']}")
     assert 'name="hours_start"' in settings_page.text and f"/leads/{lead['lead_id']}" in settings_page.text
+
+
+def test_only_agency_can_delete_lead(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("alpha")
+    owner = make_user("boss@alpha.test", tenant_id=t["id"], role="owner", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), owner["id"]))
+    lid = _intake(client, t, name="Test Lead", phone="7055550123")["lead_id"]
+
+    # Client owner: no button, request refused.
+    client.post("/login", data={"email": "boss@alpha.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    csrf = csrf_from(client)
+    assert "Delete lead" not in client.get(f"/leads/{lid}").text
+    assert client.post(f"/leads/{lid}/delete", data={"csrf_token": csrf}).status_code == 403
+    client.post("/logout", data={"csrf_token": csrf})
+
+    # Agency admin: button present, delete works, history gone, audit written.
+    admin = make_user("jeff@agency.test", role="agency_admin", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), admin["id"]))
+    client.post("/login", data={"email": "jeff@agency.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    csrf = csrf_from(client)
+    client.post("/switch-tenant", data={"tenant_id": str(t["id"]), "csrf_token": csrf})
+    assert "Delete lead" in client.get(f"/leads/{lid}").text
+    r = client.post(f"/leads/{lid}/delete", data={"csrf_token": csrf}, follow_redirects=False)
+    assert r.status_code == 303 and "notice=Lead+deleted" in r.headers["location"]
+    assert admin_conn.execute("SELECT count(*) AS n FROM lead WHERE id = %s", (lid,)).fetchone()["n"] == 0
+    assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s", (lid,)).fetchone()["n"] == 0
+    assert admin_conn.execute("SELECT count(*) AS n FROM audit WHERE action = 'lead_deleted'").fetchone()["n"] == 1
