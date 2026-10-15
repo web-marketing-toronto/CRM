@@ -25,7 +25,7 @@ gcloud services enable run.googleapis.com sqladmin.googleapis.com secretmanager.
 say "Cloud SQL instance $INSTANCE in $REGION"
 if ! gcloud sql instances describe "$INSTANCE" >/dev/null 2>&1; then
   gcloud sql instances create "$INSTANCE" \
-    --database-version=POSTGRES_16 --tier="$TIER" --region="$REGION" \
+    --database-version=POSTGRES_16 --edition=ENTERPRISE --tier="$TIER" --region="$REGION" \
     --storage-type=SSD --storage-size=10GB --storage-auto-increase \
     --backup-start-time=07:00 --backup-location="$BACKUP_REGION" --retained-backups-count=30 \
     --enable-point-in-time-recovery --retained-transaction-log-days=7 \
