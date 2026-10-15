@@ -203,3 +203,34 @@ def test_cron_tick_requires_secret(client):
 
 def test_healthz(client):
     assert client.get("/healthz").json() == {"ok": True, "db": True}
+
+
+def test_business_hours_parse():
+    from app.routers.admin import parse_hours
+
+    assert parse_hours("7:00", "7:00", ["1", "2", "3", "4", "5", "6"]) == {"start": "07:00", "end": "19:00", "days": [1, 2, 3, 4, 5, 6]}
+    assert parse_hours("8", "6:30", []) == {"start": "08:00", "end": "18:30", "days": [1, 2, 3, 4, 5, 6]}
+    assert parse_hours("12:00", "12:00", ["7"]) == {"start": "00:00", "end": "12:00", "days": [7]}
+    import pytest
+
+    with pytest.raises(ValueError):
+        parse_hours("", "7", [])
+    with pytest.raises(ValueError):
+        parse_hours("13:00", "7", [])
+
+
+def test_agency_click_through_to_lead(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("alpha")
+    u = make_user("jeff@agency.test", role="agency_admin", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), u["id"]))
+    lead = _intake(client, t, name="Click Me", phone="7055550123")
+    client.post("/login", data={"email": "jeff@agency.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    r = client.get(f"/admin/tenants/{t['id']}/leads/{lead['lead_id']}", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/leads/{lead['lead_id']}"
+    assert "Click Me" in client.get(f"/leads/{lead['lead_id']}").text
+    settings_page = client.get(f"/admin/tenants/{t['id']}")
+    assert 'name="hours_start"' in settings_page.text and f"/leads/{lead['lead_id']}" in settings_page.text

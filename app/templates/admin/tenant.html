@@ -95,7 +95,17 @@
     <div class="field"><label for="field_map">Field map <span class="dim">(JSON, incoming field → standard field)</span></label>
       <div class="help">Only needed when a form uses odd names, e.g. <code>{"your-cell": "phone", "where": "job_address"}</code>. Standard fields: contact_name, first_name, last_name, phone, email, company, contact_address, job_address, city, province, postal_code, job_type, message, form_name.</div>
       <textarea id="field_map" name="field_map" class="code" style="min-height:90px">{{ field_map_json }}</textarea></div>
-    <div class="field"><label for="business_hours">Business hours <span class="dim">(JSON; reminders wait for these)</span></label><input id="business_hours" name="business_hours" type="text" value='{{ business_hours_json }}'></div>
+    <div class="field"><label>Business hours <span class="dim">(reminders wait for these)</span></label>
+      <div class="hours">
+        <label for="hours_start">Start</label><input id="hours_start" name="hours_start" type="text" value="{{ hours_start }}" inputmode="numeric" placeholder="7:00"><span class="dim">AM</span>
+        <label for="hours_end">End</label><input id="hours_end" name="hours_end" type="text" value="{{ hours_end }}" inputmode="numeric" placeholder="7:00"><span class="dim">PM</span>
+      </div>
+      <div class="days">
+        {% for d, label in [(1,'Mon'),(2,'Tue'),(3,'Wed'),(4,'Thu'),(5,'Fri'),(6,'Sat'),(7,'Sun')] %}
+        <label class="day"><input type="checkbox" name="hours_days" value="{{ d }}" {{ 'checked' if d in hours_days else '' }}> {{ label }}</label>
+        {% endfor %}
+      </div>
+    </div>
     <label class="check"><input type="checkbox" name="is_active" {{ 'checked' if tenant.is_active else '' }}> Active (intake accepts leads, reminders run)</label>
     <button class="btn" type="submit" style="margin-top:8px">Save settings</button>
   </form>
@@ -106,7 +116,7 @@
       <thead><tr><th>Ref</th><th>Name</th><th>Status</th><th>Source</th><th>Received</th></tr></thead>
       <tbody>
       {% for l in recent %}
-        <tr><td>{{ l.ref_code }}</td><td class="name">{{ l.contact_name or '—' }}</td><td><span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span></td><td>{{ l.platform | platform_label }} · {{ l.channel | channel_label }}</td><td>{{ l.created_at | relative }}</td></tr>
+        <tr class="rowlink" onclick="window.location='/admin/tenants/{{ tenant.id }}/leads/{{ l.id }}'"><td>{{ l.ref_code }}</td><td><a class="name" href="/admin/tenants/{{ tenant.id }}/leads/{{ l.id }}">{{ l.contact_name or '—' }}</a></td><td><span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span></td><td>{{ l.platform | platform_label }} · {{ l.channel | channel_label }}</td><td>{{ l.created_at | relative }}</td></tr>
       {% else %}
         <tr><td colspan="5" class="muted">No leads yet. Send a test with the curl command above.</td></tr>
       {% endfor %}

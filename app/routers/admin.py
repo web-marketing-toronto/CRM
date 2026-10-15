@@ -95,6 +95,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
             (tenant_id,),
         ).fetchall()
     settings = get_settings()
+    hours = tenant["business_hours"] or {}
     return {
         "tenant": tenant,
         "users": users,
@@ -102,9 +103,44 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "intake_url": f"{settings.base_url}/v1/intake/{tenant['slug']}/{tenant['intake_key']}",
         "field_map_json": json.dumps(tenant["field_map"], indent=2),
         "service_area_json": json.dumps(tenant["service_area"], indent=2),
-        "business_hours_json": json.dumps(tenant["business_hours"]),
+        "hours_start": _twelve_hour(hours.get("start", "07:00")),
+        "hours_end": _twelve_hour(hours.get("end", "19:00")),
+        "hours_days": [int(d) for d in hours.get("days", [1, 2, 3, 4, 5, 6])],
         "job_types_text": "\n".join(tenant["job_types"] or []),
     }
+
+
+def _twelve_hour(value: str) -> str:
+    """'07:00' -> '7:00', '19:30' -> '7:30' (the AM/PM is fixed by the field)."""
+    try:
+        h, m = value.split(":")
+        h = int(h) % 12 or 12
+        return f"{h}:{int(m):02d}"
+    except (ValueError, AttributeError):
+        return value
+
+
+def parse_hours(start: str, end: str, days: list[str]) -> dict:
+    """Two plain fields, start is always AM and end always PM, into the stored 24-hour form."""
+    def clock(text: str, pm: bool) -> str:
+        text = text.strip().lower().replace("am", "").replace("pm", "").replace(" ", "")
+        if not text:
+            raise ValueError("Enter both a start and an end time, like 7:00 and 6:30")
+        if ":" in text:
+            h_s, m_s = text.split(":", 1)
+        else:
+            h_s, m_s = text, "0"
+        h, m = int(h_s), int(m_s)
+        if not (1 <= h <= 12) or not (0 <= m <= 59):
+            raise ValueError("Times should look like 7:00 or 6:30")
+        if pm and h != 12:
+            h += 12
+        if not pm and h == 12:
+            h = 0
+        return f"{h:02d}:{m:02d}"
+
+    chosen = sorted({int(d) for d in days if str(d).isdigit() and 1 <= int(d) <= 7}) or [1, 2, 3, 4, 5, 6]
+    return {"start": clock(start, False), "end": clock(end, True), "days": chosen}
 
 
 @router.get("/tenants/{tenant_id}")
@@ -119,11 +155,14 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
     try:
         field_map = json.loads(get("field_map") or "{}")
         service_area = json.loads(get("service_area") or "{}")
-        business_hours = json.loads(get("business_hours") or "{}")
-        if not isinstance(field_map, dict) or not isinstance(service_area, dict) or not isinstance(business_hours, dict):
+        if not isinstance(field_map, dict) or not isinstance(service_area, dict):
             raise ValueError("expected JSON objects")
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=f"Settings JSON is invalid: {exc}", notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
+    try:
+        business_hours = parse_hours(get("hours_start"), get("hours_end"), [str(d) for d in form.getlist("hours_days")])
+    except ValueError as exc:
+        return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     types = [t.strip() for t in re.split(r"[\n,]", get("job_types")) if t.strip()]
     default_assignee = get("default_assignee_id") or None
     twilio = normalize_phone(get("twilio_number")) if get("twilio_number") else None
@@ -136,12 +175,22 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
             """,
             (
                 get("name") or "Client", get("timezone") or "America/Toronto", Jsonb(field_map), Jsonb(service_area),
-                Jsonb(business_hours or {"start": "07:00", "end": "19:00", "days": [1, 2, 3, 4, 5, 6]}), types,
+                Jsonb(business_hours), types,
                 UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on", tenant_id,
             ),
         )
         auth_service.audit(conn, action="tenant_updated", user_id=principal.user_id, tenant_id=tenant_id, target_type="tenant", target_id=str(tenant_id))
     return RedirectResponse(f"/admin/tenants/{tenant_id}?notice=Saved", status_code=303)
+
+
+@router.get("/tenants/{tenant_id}/leads/{lead_id}")
+def open_lead(tenant_id: UUID, lead_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    """Click-through from a client's settings page: switch to that client, then show the lead."""
+    with db(None, "agency_admin") as conn:
+        if conn.execute("SELECT 1 FROM lead WHERE id = %s AND tenant_id = %s", (lead_id, tenant_id)).fetchone() is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+    auth_service.set_acting_tenant(principal.session["id"], tenant_id, user_id=principal.user_id, ip=None)
+    return RedirectResponse(f"/leads/{lead_id}", status_code=303)
 
 
 @router.post("/tenants/{tenant_id}/rotate-key", dependencies=[Depends(check_csrf)])

@@ -7,7 +7,7 @@
       <div class="ref">{{ lead.ref_code }}{% if lead.previous_lead_id %} · returning{% endif %}</div>
       <h1>{{ lead.contact_name or lead.company or (lead.phone_e164 | phone) or 'Unknown caller' }}</h1>
       {% if lead.company and lead.contact_name %}<div class="muted">{{ lead.company }}</div>{% endif %}
-      {% if lead.job_type %}<div class="job">{{ lead.job_type }}</div>{% endif %}
+      {% if lead.job_type %}<div class="job"><span class="job-label">Work type:</span> {{ lead.job_type }}</div>{% endif %}
       {% if lead.job_address %}
         <div class="addr"><a href="https://www.google.com/maps/search/?api=1&query={{ lead.job_address | urlencode }}" target="_blank" rel="noopener">{{ lead.job_address }}</a></div>
       {% elif lead.contact_address %}
