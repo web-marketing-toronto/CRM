@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     meta_verify_token: str | None = None
     meta_access_token: str | None = None
 
+    # Ad platforms, for conversion uploads and spend. Google: either the path to a google-ads.yaml (the
+    # Campaign Manager's file, mounted from Secret Manager) or the four values from it. 'ads_provider'
+    # is 'live' | 'fake' (tests) | 'log' (dev).
+    ads_provider: str = "live"
+    google_ads_yaml: str | None = None
+    google_ads_developer_token: str | None = None
+    google_ads_client_id: str | None = None
+    google_ads_client_secret: str | None = None
+    google_ads_refresh_token: str | None = None
+    google_ads_login_customer_id: str | None = None
+
     # Shared secret for Cloud Scheduler -> /internal/cron/tick when OIDC is not used.
     cron_secret: str | None = None
 

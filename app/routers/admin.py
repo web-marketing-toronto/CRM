@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import followup, importer, lead_messages
+from app.services import conversions, followup, importer, lead_messages
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -95,6 +95,13 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
             "SELECT id, ref_code, contact_name, status, channel, platform, created_at FROM lead WHERE tenant_id = %s ORDER BY created_at DESC LIMIT 10",
             (tenant_id,),
         ).fetchall()
+        recent_conv = conn.execute(
+            """
+            SELECT c.*, l.ref_code, l.contact_name FROM conversion_event c JOIN lead l ON l.id = c.lead_id
+            WHERE c.tenant_id = %s ORDER BY c.created_at DESC LIMIT 10
+            """,
+            (tenant_id,),
+        ).fetchall()
     settings = get_settings()
     hours = tenant["business_hours"] or {}
     return {
@@ -108,6 +115,10 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "meta_configured": bool(settings.meta_app_secret and settings.meta_access_token),
         "snippet_url": f"{settings.base_url}/static/wmt.js",
         "meta_page_id": ((tenant.get("settings") or {}).get("meta") or {}).get("page_id", ""),
+        "google_ads": conversions.google_cfg(tenant),
+        "meta_cfg": conversions.meta_cfg(tenant),
+        "conv": conversions.conv_cfg(tenant),
+        "recent_conversions": recent_conv,
         "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
         "field_map_json": json.dumps(tenant["field_map"], indent=2),
         "service_area_json": json.dumps(tenant["service_area"], indent=2),
@@ -203,6 +214,50 @@ def parse_followup(form) -> dict:
     }
 
 
+def parse_ads(form) -> dict:
+    """Google Ads and Meta ids for conversion uploads and spend."""
+    get = lambda k: str(form.get(k) or "").strip()  # noqa: E731
+    customer = re.sub(r"\D", "", get("google_customer_id"))
+    if customer and len(customer) != 10:
+        raise ValueError("A Google Ads customer id has 10 digits (123-456-7890)")
+
+    def action(key: str) -> str:
+        v = get(key)
+        if not v:
+            return ""
+        if re.fullmatch(r"\d+", v) or re.fullmatch(r"customers/\d+/conversionActions/\d+", v):
+            return v
+        raise ValueError(f"The conversion action should be its numeric id or customers/…/conversionActions/… ({key})")
+
+    try:
+        qv = float(get("google_qualified_value") or 0)
+    except ValueError as exc:
+        raise ValueError("The qualified-lead value should be a number") from exc
+    since = get("value_bidding_since")
+    if since and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
+        raise ValueError("The value-based bidding date should look like 2026-11-01")
+    return {
+        "google_ads": {"customer_id": customer, "qualified_action": action("google_qualified_action"), "won_action": action("google_won_action"), "qualified_value": qv},
+        "meta": {
+            "dataset_id": re.sub(r"\D", "", get("meta_dataset_id")), "ad_account_id": re.sub(r"\D", "", get("meta_ad_account_id")),
+            "qualified_event": get("meta_qualified_event") or conversions.META_DEFAULTS["qualified_event"], "won_event": get("meta_won_event") or conversions.META_DEFAULTS["won_event"],
+            "test_event_code": get("meta_test_event_code"),
+        },
+        "conversions": {"enabled": form.get("conversions_enabled") == "on", "value_bidding_since": since},
+    }
+
+
+@router.post("/conversions/{event_id}/retry", dependencies=[Depends(check_csrf)])
+def conversion_retry(event_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    with db(None, "agency_admin") as conn:
+        ev = conn.execute("SELECT lead_id FROM conversion_event WHERE id = %s", (event_id,)).fetchone()
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        conversions.retry(conn, event_id)
+        conversions.process_pending(conn, lead_id=ev["lead_id"])
+    return RedirectResponse(f"/leads/{ev['lead_id']}", status_code=303)
+
+
 def parse_lead_messaging(form) -> dict:
     templates = {}
     for key in ("ack", "decline", "appointment"):
@@ -256,6 +311,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
         call_min = int(get("call_min_seconds") or 30)
         if not (0 <= call_min <= 600):
             raise ValueError("Minimum call length should be between 0 and 600 seconds")
+        ads_cfg = parse_ads(form)
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     default_assignee = get("default_assignee_id") or None
@@ -272,7 +328,10 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                 get("name") or "Client", get("timezone") or "America/Toronto", Jsonb(field_map), Jsonb(service_area),
                 Jsonb(business_hours), types,
                 UUID(default_assignee) if default_assignee else None, twilio, get("is_active") == "on",
-                Jsonb({"followup": followup_cfg, "lead_messaging": lead_msg_cfg, "meta": {"page_id": meta_page_id}, "callrail": {"min_seconds": call_min}}), tenant_id,
+                Jsonb({
+                    "followup": followup_cfg, "lead_messaging": lead_msg_cfg, "callrail": {"min_seconds": call_min},
+                    "meta": {**ads_cfg["meta"], "page_id": meta_page_id}, "google_ads": ads_cfg["google_ads"], "conversions": ads_cfg["conversions"],
+                }), tenant_id,
             ),
         )
         auth_service.audit(conn, action="tenant_updated", user_id=principal.user_id, tenant_id=tenant_id, target_type="tenant", target_id=str(tenant_id))

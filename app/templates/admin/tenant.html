@@ -200,6 +200,37 @@
       <div class="field"><label for="tpl_decline" class="dim" style="font-weight:500">Out-of-area decline</label><textarea id="tpl_decline" name="tpl_decline" style="min-height:70px" placeholder="{{ lead_msg_default_templates.decline }}">{{ lead_msg.templates.decline if lead_msg.templates.decline != lead_msg_default_templates.decline else '' }}</textarea></div>
       <div class="field"><label for="tpl_appointment" class="dim" style="font-weight:500">Appointment confirmation</label><textarea id="tpl_appointment" name="tpl_appointment" style="min-height:70px" placeholder="{{ lead_msg_default_templates.appointment }}">{{ lead_msg.templates.appointment if lead_msg.templates.appointment != lead_msg_default_templates.appointment else '' }}</textarea></div>
     </div>
+    <div class="field"><label>Ad platforms: conversions back, spend in
+      <span class="info" tabindex="0" role="button" aria-label="How conversion uploads work">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5M10 6.3v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="tip">
+          <strong>Two outcomes go back to the platforms:</strong> the first of Contacted / Quoted / Won sends <em>Qualified lead</em>; Won sends <em>Closed won</em> with the job value in CAD. The timestamp is the status change. Imported and test leads never upload. Each upload is retried with backoff for 72 hours and shows on the lead, so a failed match is never silent.
+          <br><br><strong>Google Ads:</strong> the client's 10-digit customer id (uploads go through the MCC credentials in Secret Manager). Create two conversion actions in the client account, <em>Import → CRM / Other data sources → Track conversions from clicks</em>, named "CRM Qualified Lead" and "CRM Closed Won", both <strong>secondary</strong>, click-through window 90 days, Enhanced conversions for leads turned on; paste their ids here. Leads with a gclid match on it; the rest match on hashed email and phone (needs the Google tag's user-provided data collection on the site).
+          <br><br><strong>Meta:</strong> the dataset (pixel) id from Events Manager and the ad account id for spend. Events arrive as <code>Qualified</code> and <code>Converted</code> (rename below if the client's Events Manager uses other names) and are mapped to funnel stages there; instant-form leads match on their lead id, website leads on fbc/fbp and hashed email and phone. Use a test event code from Events Manager → Test events while checking the hookup, then clear it.
+          <br><br><strong>Bidding policy:</strong> both Google actions stay secondary until the client has three months of stage data; when you switch campaigns to value-based bidding, record the date so the reports can show before and after.
+        </span>
+      </span></label>
+      <div class="grid-2">
+        <div class="field"><label for="google_customer_id" class="dim" style="font-weight:500">Google Ads customer id</label><input id="google_customer_id" name="google_customer_id" type="text" inputmode="numeric" value="{{ google_ads.customer_id }}" placeholder="123-456-7890"></div>
+        <div class="field"><label for="google_qualified_value" class="dim" style="font-weight:500">Value sent with Qualified lead (CAD)</label><input id="google_qualified_value" name="google_qualified_value" type="text" inputmode="decimal" value="{{ google_ads.qualified_value or '' }}" placeholder="0"></div>
+        <div class="field"><label for="google_qualified_action" class="dim" style="font-weight:500">Conversion action: CRM Qualified Lead</label><input id="google_qualified_action" name="google_qualified_action" type="text" value="{{ google_ads.qualified_action }}" placeholder="conversion action id"></div>
+        <div class="field"><label for="google_won_action" class="dim" style="font-weight:500">Conversion action: CRM Closed Won</label><input id="google_won_action" name="google_won_action" type="text" value="{{ google_ads.won_action }}" placeholder="conversion action id"></div>
+        <div class="field"><label for="meta_dataset_id" class="dim" style="font-weight:500">Meta dataset (pixel) id</label><input id="meta_dataset_id" name="meta_dataset_id" type="text" inputmode="numeric" value="{{ meta_cfg.dataset_id }}"></div>
+        <div class="field"><label for="meta_ad_account_id" class="dim" style="font-weight:500">Meta ad account id <span class="dim">(for spend)</span></label><input id="meta_ad_account_id" name="meta_ad_account_id" type="text" inputmode="numeric" value="{{ meta_cfg.ad_account_id }}" placeholder="act_… digits"></div>
+        <div class="field"><label for="meta_qualified_event" class="dim" style="font-weight:500">Meta event name: qualified</label><input id="meta_qualified_event" name="meta_qualified_event" type="text" value="{{ meta_cfg.qualified_event }}"></div>
+        <div class="field"><label for="meta_won_event" class="dim" style="font-weight:500">Meta event name: won</label><input id="meta_won_event" name="meta_won_event" type="text" value="{{ meta_cfg.won_event }}"></div>
+        <div class="field"><label for="meta_test_event_code" class="dim" style="font-weight:500">Meta test event code <span class="dim">(clear when live)</span></label><input id="meta_test_event_code" name="meta_test_event_code" type="text" value="{{ meta_cfg.test_event_code }}" placeholder="TEST12345"></div>
+        <div class="field"><label for="value_bidding_since" class="dim" style="font-weight:500">Value-based bidding since</label><input id="value_bidding_since" name="value_bidding_since" type="date" value="{{ conv.value_bidding_since }}"></div>
+      </div>
+      <label class="check"><input type="checkbox" name="conversions_enabled" {{ 'checked' if conv.enabled else '' }}> Send Qualified / Won back to the ad platforms</label>
+      {% if recent_conversions %}
+      <details style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:13px">Recent uploads</summary>
+        <table class="data" style="margin-top:8px;font-size:13px"><thead><tr><th>Lead</th><th>What</th><th>Status</th><th>When</th></tr></thead><tbody>
+        {% for c in recent_conversions %}<tr><td><a href="/admin/tenants/{{ tenant.id }}/leads/{{ c.lead_id }}">{{ c.ref_code }} {{ c.contact_name or '' }}</a></td><td>{{ 'Qualified' if c.action == 'qualified' else 'Won' }}{% if c.value %} ${{ c.value }}{% endif %} → {{ 'Google Ads' if c.platform == 'google_ads' else 'Meta' }}</td><td>{{ c.status }}{% if c.last_error %} <span class="dim">{{ c.last_error[:80] }}</span>{% endif %}</td><td class="dim">{{ (c.sent_at or c.created_at) | relative }}</td></tr>{% endfor %}
+        </tbody></table>
+      </details>
+      {% endif %}
+    </div>
     <label class="check"><input type="checkbox" name="is_active" {{ 'checked' if tenant.is_active else '' }}> Active (intake accepts leads, reminders run)</label>
     <button class="btn" type="submit" style="margin-top:8px">Save settings</button>
   </form>

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.db import system_db
-from app.services import followup
+from app.services import conversions, followup
 
 log = logging.getLogger("crm.worker")
 
@@ -23,7 +23,15 @@ def run_tick(now: datetime | None = None) -> dict:
         stats = followup.dispatch_due(conn, now=now)
     with system_db() as conn:
         digests = followup.run_digests(conn, now=now)
-    return {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests}
+    with system_db() as conn:
+        conv = conversions.process_pending(conn, now=now)
+    nightly = None
+    try:
+        with system_db() as conn:
+            nightly = conversions.run_nightly(conn, now=now)
+    except Exception:  # noqa: BLE001 - spend is best effort; the next tick after 04:00 tomorrow tries again
+        log.exception("nightly spend job failed")
+    return {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests, "conversions": conv, "spend": nightly}
 
 
 def dispatch_lead_now(lead_id: UUID) -> None:

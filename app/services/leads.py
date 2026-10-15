@@ -317,9 +317,12 @@ def log_touch(
         )
     params.append(lead["id"])
     conn.execute(f"UPDATE lead SET {', '.join(sets)} WHERE id = %s", params)
-    from app.services import followup
+    from app.services import conversions, followup
 
-    followup.on_touch(conn, _tenant(conn, tenant_id), {**lead, "status": "contacted" if lead["status"] == "new" else lead["status"]}, now=now)
+    tenant = _tenant(conn, tenant_id)
+    followup.on_touch(conn, tenant, {**lead, "status": "contacted" if lead["status"] == "new" else lead["status"]}, now=now)
+    if lead["status"] == LeadStatus.NEW.value:
+        conversions.on_status_change(conn, tenant, lead, LeadStatus.NEW, LeadStatus.CONTACTED, now=now)
 
 
 def _tenant(conn: psycopg.Connection, tenant_id: UUID) -> dict:
@@ -373,9 +376,11 @@ def change_status(
         conn, lead["tenant_id"], lead["id"], ActivityType.STATUS_CHANGE,
         actor_id=actor_id, actor_label=actor_label, body=note, detail=detail, occurred_at=now,
     )
-    from app.services import followup
+    from app.services import conversions, followup
 
-    followup.on_status_change(conn, _tenant(conn, lead["tenant_id"]), lead, old, new_status, now=now)
+    tenant = _tenant(conn, lead["tenant_id"])
+    followup.on_status_change(conn, tenant, lead, old, new_status, now=now)
+    conversions.on_status_change(conn, tenant, lead, old, new_status, now=now, deal_value=deal_value)
 
 
 def add_note(conn: psycopg.Connection, lead: dict, body: str, *, actor_id: UUID | None, actor_label: str) -> None:

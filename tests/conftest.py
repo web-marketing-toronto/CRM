@@ -36,6 +36,7 @@ os.environ["TWILIO_AGENCY_FROM"] = "+14165550000"
 os.environ["META_APP_SECRET"] = "meta-secret"
 os.environ["META_VERIFY_TOKEN"] = "verify-me"
 os.environ["META_ACCESS_TOKEN"] = "EAAtest"
+os.environ["ADS_PROVIDER"] = "fake"
 os.environ.pop("GOOGLE_MAPS_API_KEY", None)
 
 from app import db as dbmod  # noqa: E402
@@ -58,16 +59,18 @@ def database() -> Iterator[None]:
 def clean_tables() -> Iterator[None]:
     yield
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
-        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit, message_log, sms_opt_out, import_batch RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit, message_log, sms_opt_out, import_batch, job_run RESTART IDENTITY CASCADE")
 
 
 @pytest.fixture(autouse=True)
 def outbox():
-    from app.services import messaging
+    from app.services import adplatforms, messaging
 
     messaging.outbox.clear()
+    adplatforms.outbox.clear()
     yield messaging.outbox
     messaging.outbox.clear()
+    adplatforms.outbox.clear()
 
 
 @pytest.fixture

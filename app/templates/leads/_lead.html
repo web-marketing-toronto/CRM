@@ -190,17 +190,31 @@
             {% elif a.type == 'reminder_sent' %}Reminder sent <span class="who">{{ a.body }}</span>
             {% elif a.type == 'auto_message' %}Automatic {{ 'text' if a.detail.channel in ('twilio', 'fake', 'log') and a.detail.kind != 'email' else 'message' }} to them{% if not a.detail.delivered %} <span class="who">(not delivered{% if a.detail.error %}: {{ a.detail.error }}{% endif %})</span>{% endif %}
             {% elif a.type == 'appointment' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'conversion_sent' %}{% if a.detail.status == 'failed' %}Not sent to {{ 'Google Ads' if a.detail.platform == 'google_ads' else 'Meta' }} <span class="who">{{ a.body }}</span>{% else %}Sent to ad platform <span class="who">{{ a.body }}</span>{% endif %}
             {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted from the app <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment') %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent') %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>
       {% endfor %}
     </ul>
   </div>
+
+  {% if principal.is_agency and sync %}
+  <div>
+    <h3 style="margin-bottom:8px">Ad platform sync <span class="dim" style="font-weight:400;font-size:13px">(agency only)</span></h3>
+    <table class="data" style="font-size:13px"><tbody>
+    {% for c in sync %}
+      <tr><td>{{ 'Qualified lead' if c.action == 'qualified' else 'Closed won' }}{% if c.value %} · ${{ c.value }}{% endif %} → {{ 'Google Ads' if c.platform == 'google_ads' else 'Meta' }}</td>
+      <td>{% if c.status == 'sent' %}<span class="pill s-won">sent</span> <span class="dim">{{ c.sent_at | relative }}</span>{% elif c.status == 'failed' %}<span class="pill overdue">failed</span> <span class="dim">{{ c.last_error }}</span>{% else %}<span class="pill">pending</span>{% if c.last_error %} <span class="dim">retrying: {{ c.last_error[:120] }}</span>{% endif %}{% endif %}</td>
+      <td style="text-align:right">{% if c.status != 'sent' %}<form method="post" action="/admin/conversions/{{ c.id }}/retry" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Retry now</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody></table>
+  </div>
+  {% endif %}
 
   {% if principal.is_agency %}
   <div style="display:flex;justify-content:flex-end">

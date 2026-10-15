@@ -126,7 +126,9 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
             (lead_id,),
         ).fetchone()
         full_tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        sync = conn.execute("SELECT * FROM conversion_event WHERE lead_id = %s ORDER BY created_at", (lead_id,)).fetchall() if principal.is_agency else []
     return {
+        "sync": sync,
         "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),
         "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
