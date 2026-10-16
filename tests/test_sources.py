@@ -69,7 +69,7 @@ def test_callrail_call_from_existing_lead_logs_on_it(client, setup, admin_conn, 
     r = client.post(f"/v1/callrail/{t['slug']}/{t['intake_key']}", json=_call(answered=False, duration=0, id="CAL77"))
     assert r.status_code == 200 and r.json()["created"] is False and r.json()["lead_id"] == lead_id
     assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'lead_replied'", (lead_id,)).fetchone()["n"] == 1
-    assert any("replied" in m["body"] and "Missed call from them" in m["body"] for m in outbox.sms)
+    assert any("Missed call from them" in m["body"] and m["to"] == "+17055551000" for m in outbox.sms)
     assert admin_conn.execute("SELECT count(*) AS n FROM lead_source WHERE lead_id = %s", (lead_id,)).fetchone()["n"] == 2
     # An answered call later is contact.
     client.post(f"/v1/callrail/{t['slug']}/{t['intake_key']}", json=_call(answered=True, duration=300, id="CAL78"))
