@@ -24,6 +24,8 @@ URL="${BASE_URL:-${EXISTING_URL:-https://placeholder.invalid}}"
 #   crm-twilio-account-sid      TWILIO_ACCOUNT_SID          texting (with the next two)
 #   crm-twilio-auth-token       TWILIO_AUTH_TOKEN
 #   crm-twilio-agency-from      TWILIO_AGENCY_FROM          the agency's number, E.164, e.g. +14165550100
+#   crm-smtp-password           SMTP_PASSWORD               email via a Google Workspace mailbox (sets EMAIL_PROVIDER=smtp;
+#                                                           SMTP_USER defaults to EMAIL_FROM; override with SMTP_USER=... on the command line)
 #   crm-postmark-token          POSTMARK_TOKEN              email via Postmark (sets EMAIL_PROVIDER=postmark)
 #   crm-sendgrid-api-key        SENDGRID_API_KEY            or email via SendGrid (sets EMAIL_PROVIDER=sendgrid)
 #   crm-callrail-signing-key    CALLRAIL_SIGNING_KEY        verify CallRail webhooks (optional)
@@ -36,6 +38,7 @@ OPTIONAL_SECRETS=(
   "crm-twilio-account-sid:TWILIO_ACCOUNT_SID"
   "crm-twilio-auth-token:TWILIO_AUTH_TOKEN"
   "crm-twilio-agency-from:TWILIO_AGENCY_FROM"
+  "crm-smtp-password:SMTP_PASSWORD"
   "crm-postmark-token:POSTMARK_TOKEN"
   "crm-sendgrid-api-key:SENDGRID_API_KEY"
   "crm-callrail-signing-key:CALLRAIL_SIGNING_KEY"
@@ -52,7 +55,8 @@ for pair in "${OPTIONAL_SECRETS[@]}"; do
     gcloud secrets add-iam-policy-binding "$name" --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
     case "$var" in
       TWILIO_AUTH_TOKEN) EXTRA_ENV="${EXTRA_ENV},SMS_PROVIDER=twilio" ;;
-      POSTMARK_TOKEN) EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=postmark" ;;
+      SMTP_PASSWORD) EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=smtp,SMTP_HOST=${SMTP_HOST:-smtp.gmail.com},SMTP_PORT=${SMTP_PORT:-587}"; [[ -n "${SMTP_USER:-}" ]] && EXTRA_ENV="${EXTRA_ENV},SMTP_USER=${SMTP_USER}" ;;
+      POSTMARK_TOKEN) [[ "$EXTRA_ENV" == *EMAIL_PROVIDER* ]] || EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=postmark" ;;
       SENDGRID_API_KEY) [[ "$EXTRA_ENV" == *EMAIL_PROVIDER* ]] || EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=sendgrid" ;;
     esac
   fi

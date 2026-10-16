@@ -350,3 +350,60 @@ def test_agency_saves_followup_schedule(client, make_tenant, make_user, admin_co
     # The new schedule is what the engine uses.
     tenant = admin_conn.execute("SELECT * FROM tenant WHERE id = %s", (t["id"],)).fetchone()
     assert followup.settings_for(tenant)["cadence_days"] == [2, 5, 10]
+
+
+def test_smtp_provider_builds_a_proper_message(monkeypatch, admin_conn, make_tenant):
+    """The SMTP path: STARTTLS, login as the mailbox, From keeps the display name, Reply-To set, text + HTML parts."""
+    import smtplib
+
+    from app import config
+    from app.services import messaging
+
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=0):
+            sent["host"], sent["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def ehlo(self):
+            sent["ehlo"] = True
+
+        def starttls(self):
+            sent["tls"] = True
+
+        def login(self, user, password):
+            sent["login"] = (user, password)
+
+        def send_message(self, msg):
+            sent["msg"] = msg
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+    s = config.get_settings()
+    monkeypatch.setattr(s, "email_provider", "smtp")
+    monkeypatch.setattr(s, "smtp_password", "app-password")
+    monkeypatch.setattr(s, "smtp_user", "leads@web-marketing-toronto.com")
+    t = make_tenant("roofco")
+    from app.db import system_db
+
+    with system_db() as conn:
+        r = messaging.send_email(conn, to="mike@example.com", subject="Your request", text="hi there", html="<p>hi there</p>", kind="ack", tenant_id=t["id"], reply_to="dan@roofco.test", from_name="North Ridge Roofing")
+    assert r.ok and r.provider == "smtp" and r.provider_id.startswith("<")
+    assert sent["host"] == "smtp.gmail.com" and sent["port"] == 587 and sent["tls"] and sent["login"] == ("leads@web-marketing-toronto.com", "app-password")
+    msg = sent["msg"]
+    assert msg["From"] == "North Ridge Roofing <leads@web-marketing-toronto.com>" and msg["Reply-To"] == "dan@roofco.test" and msg["To"] == "mike@example.com"
+    assert msg.is_multipart() and [p.get_content_type() for p in msg.iter_parts()] == ["text/plain", "text/html"]
+    assert admin_conn.execute("SELECT status, provider FROM message_log WHERE channel = 'email'").fetchone() == {"status": "sent", "provider": "smtp"}
+    # A refused login is a failed send, not a crash.
+    def bad_login(self, user, password):
+        raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+    monkeypatch.setattr(FakeSMTP, "login", bad_login)
+    with system_db() as conn:
+        r = messaging.send_email(conn, to="mike@example.com", subject="x", text="y", html=None, kind="ack", tenant_id=t["id"])
+    assert not r.ok and "535" in r.error

@@ -130,11 +130,30 @@ To replace a value later: `printf '%s' 'NEW' | gcloud secrets versions add NAME 
 
 ### Email
 
-Pick one provider. Postmark: create a server, use its Server API token; add and verify the sending domain
-(`web-marketing-toronto.com`) under Sender Signatures with the DKIM and Return-Path records. SendGrid: an
-API key with Mail Send, plus domain authentication. The From address is `EMAIL_FROM` (default
-`leads@web-marketing-toronto.com`; override with `EMAIL_FROM=... bash deploy/deploy.sh`). Emails to leads carry the
-client's reply-to address so replies go to them.
+Three ways; pick one. The Google Workspace one is the least work and is what the Campaign Manager already does.
+
+**Google Workspace mailbox (recommended to start).** Use a dedicated mailbox such as `leads@web-marketing-toronto.com`
+(create it in the Admin console, or use `campaigns@`). On that account: turn on 2-Step Verification, then
+Google Account → Security → 2-Step Verification → App passwords → create one named "WMT CRM" (16 characters).
+
+```bash
+printf '%s' 'xxxx xxxx xxxx xxxx' | gcloud secrets create crm-smtp-password --data-file=- --replication-policy=user-managed --locations=northamerica-northeast2
+EMAIL_FROM=leads@web-marketing-toronto.com bash deploy/deploy.sh
+```
+
+The From address must be the mailbox itself (or a "Send mail as" alias on it), or Google rewrites it. Every
+message the CRM sends appears in that mailbox's Sent folder, and emails to leads carry the client's address as
+Reply-To, so replies go to the client. Workspace allows 2,000 messages a day per mailbox, far above what a dozen
+clients generate. If the mailbox is not the From address, add `SMTP_USER=mailbox@... ` before `bash deploy/deploy.sh`.
+
+**Postmark.** Create a server, use its Server API token (`crm-postmark-token`), and verify the sending domain under
+Sender Signatures with the DKIM and Return-Path records. New accounts can only email your own domain until
+Postmark approves them, usually the same day.
+
+**SendGrid.** An API key with Mail Send (`crm-sendgrid-api-key`) plus domain authentication.
+
+With any of them the From address is `EMAIL_FROM` (default `leads@web-marketing-toronto.com`; override with
+`EMAIL_FROM=... bash deploy/deploy.sh`).
 
 ### Meta (lead ads webhook and Conversions API)
 

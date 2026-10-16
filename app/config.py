@@ -36,9 +36,14 @@ class Settings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_agency_from: str | None = None  # E.164 number used for alerts to agency staff and clients without their own number
-    email_provider: str = "log"            # 'postmark' | 'sendgrid' | 'fake' | 'log'
+    email_provider: str = "log"            # 'smtp' | 'postmark' | 'sendgrid' | 'fake' | 'log'
     postmark_token: str | None = None
     sendgrid_api_key: str | None = None
+    # SMTP, e.g. a Google Workspace mailbox with an app password: smtp.gmail.com:587, user = the mailbox.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str | None = None           # defaults to email_from
+    smtp_password: str | None = None
     email_from: str = "leads@web-marketing-toronto.com"
     email_from_name: str = "WMT Leads"
 

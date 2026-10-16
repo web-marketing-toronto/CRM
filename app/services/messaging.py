@@ -5,7 +5,7 @@ hand the message to the configured provider, and update the row with the provide
 Providers:
 
     sms:   twilio | fake (records only, for tests) | log (prints, for local dev)
-    email: postmark | sendgrid | fake | log
+    email: smtp (a Google Workspace mailbox, say) | postmark | sendgrid | fake | log
 
 The fake provider keeps an in-memory outbox so tests can assert on what would have gone out.
 """
@@ -123,6 +123,38 @@ def _sendgrid_send(to: str, subject: str, text: str, html: str | None, reply_to:
     return SendResult(True, "sendgrid", provider_id=r.headers.get("X-Message-Id"))
 
 
+def _smtp_send(to: str, subject: str, text: str, html: str | None, reply_to: str | None, from_name: str | None = None) -> SendResult:
+    """Plain SMTP with STARTTLS. With Gmail / Google Workspace the From address must be the mailbox itself or
+    one of its 'Send mail as' aliases, otherwise Google rewrites it; the display name and Reply-To are kept."""
+    import smtplib
+    from email.message import EmailMessage
+    from email.utils import formataddr, make_msgid
+
+    s = get_settings()
+    user = s.smtp_user or s.email_from
+    if not s.smtp_password:
+        return SendResult(False, "smtp", error="SMTP password is not configured")
+    msg = EmailMessage()
+    msg["From"] = formataddr((from_name or s.email_from_name, s.email_from))
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg["Message-ID"] = make_msgid(domain=s.email_from.split("@")[-1])
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.set_content(text)
+    if html:
+        msg.add_alternative(html, subtype="html")
+    try:
+        with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(user, s.smtp_password)
+            server.send_message(msg)
+    except (smtplib.SMTPException, OSError) as exc:
+        return SendResult(False, "smtp", error=str(exc)[:300])
+    return SendResult(True, "smtp", provider_id=msg["Message-ID"])
+
+
 # --- Logging + dispatch ---------------------------------------------------------------------
 
 def _log(conn: psycopg.Connection, **cols: Any) -> int:
@@ -193,7 +225,9 @@ def send_email(
 ) -> SendResult:
     s = get_settings()
     log_id = _log(conn, tenant_id=tenant_id, lead_id=lead_id, user_id=user_id, reminder_id=reminder_id, direction="out", channel="email", kind=kind, to_addr=to, from_addr=s.email_from, subject=subject, body=text, provider=s.email_provider)
-    if s.email_provider == "postmark":
+    if s.email_provider == "smtp":
+        result = _smtp_send(to, subject, text, html, reply_to, from_name)
+    elif s.email_provider == "postmark":
         result = _postmark_send(to, subject, text, html, reply_to, from_name)
     elif s.email_provider == "sendgrid":
         result = _sendgrid_send(to, subject, text, html, reply_to, from_name)
