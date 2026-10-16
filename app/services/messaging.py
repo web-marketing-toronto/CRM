@@ -42,10 +42,12 @@ class Outbox:
     def __init__(self) -> None:
         self.sms: list[dict[str, Any]] = []
         self.email: list[dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
     def clear(self) -> None:
         self.sms.clear()
         self.email.clear()
+        self.calls.clear()
 
 
 outbox = Outbox()
@@ -63,6 +65,32 @@ def _twilio_send(to: str, from_: str, body: str) -> SendResult:
         data["StatusCallback"] = f"{s.base_url}/v1/twilio/status"
     try:
         r = httpx.post(url, data=data, auth=(s.twilio_account_sid, s.twilio_auth_token), timeout=15)
+    except httpx.HTTPError as exc:
+        return SendResult(False, "twilio", error=str(exc)[:300])
+    if r.status_code >= 300:
+        try:
+            msg = r.json().get("message", r.text)
+        except ValueError:
+            msg = r.text
+        return SendResult(False, "twilio", error=f"{r.status_code}: {msg}"[:300])
+    return SendResult(True, "twilio", provider_id=r.json().get("sid"))
+
+
+def start_call(*, to: str, from_: str, connect_url: str) -> SendResult:
+    """Ring `to` from the client's number; when they answer, Twilio fetches `connect_url` for what to do next
+    (dial the lead). Used for click-to-call so the lead sees the business number, not a personal mobile."""
+    s = get_settings()
+    if s.sms_provider == "fake":
+        outbox.calls.append({"to": to, "from": from_, "url": connect_url})
+        return SendResult(True, "fake", provider_id=f"fake-call-{len(outbox.calls)}")
+    if s.sms_provider != "twilio":
+        log.info("CALL to %s from %s then %s", to, from_, connect_url)
+        return SendResult(True, "log", provider_id="log-call")
+    if not (s.twilio_account_sid and s.twilio_auth_token):
+        return SendResult(False, "twilio", error="Twilio credentials are not configured")
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{s.twilio_account_sid}/Calls.json"
+    try:
+        r = httpx.post(url, data={"To": to, "From": from_, "Url": connect_url, "Method": "POST", "Timeout": "25"}, auth=(s.twilio_account_sid, s.twilio_auth_token), timeout=15)
     except httpx.HTTPError as exc:
         return SendResult(False, "twilio", error=str(exc)[:300])
     if r.status_code >= 300:

@@ -49,14 +49,36 @@
   <div>
     <div class="actions">
       {% if lead.phone_e164 %}
+      {% if can_call %}
+      <form method="post" action="/leads/{{ lead.id }}/call" hx-post="/leads/{{ lead.id }}/call" hx-target="#lead" hx-swap="outerHTML" style="display:contents">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="act" type="submit" title="Your phone rings first, then {{ lead.contact_name or 'the lead' }}; they see {{ texting_number | phone }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.7a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.7a2 2 0 0 1 1.7 2z"/></svg>
+          Call <small>rings you, then {{ (lead.contact_name or 'them').split(' ')[0] }} · shows {{ texting_number | phone }}</small>
+        </button>
+      </form>
+      {% else %}
       <a class="act" href="tel:{{ lead.phone_e164 }}" data-touch="call">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.7a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.7a2 2 0 0 1 1.7 2z"/></svg>
         Call <small>{{ lead.phone_e164 | phone }}</small>
       </a>
+      {% endif %}
+      {% if relay and principal.user.mobile_e164 %}
+      <a class="act" href="sms:{{ texting_number }}?&body={{ (lead.ref_code ~ ' ') | urlencode }}" title="Opens Messages to the business number; what you type is sent on to {{ lead.contact_name or 'the lead' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Text <small>from your phone · via {{ texting_number | phone }}</small>
+      </a>
+      {% elif can_text %}
+      <a class="act" href="#text-box" onclick="document.querySelector('#text-box textarea').focus(); return false;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Text <small>from here · shows {{ texting_number | phone }}</small>
+      </a>
+      {% else %}
       <a class="act" href="sms:{{ lead.phone_e164 }}" data-touch="text">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Text <small>opens Messages</small>
       </a>
+      {% endif %}
       {% else %}
       <span class="act" aria-disabled="true">Call <small>no phone number</small></span>
       <span class="act" aria-disabled="true">Text <small>no phone number</small></span>
@@ -70,7 +92,7 @@
       <span class="act" aria-disabled="true">Email <small>no email</small></span>
       {% endif %}
     </div>
-    <div class="hint">Tapping logs the attempt and moves a new lead to Contacted.{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
+    <div class="hint">{% if can_text %}Calls and texts go through {{ texting_number | phone }}, so they only ever see the business number; the thread stays here whichever phone you use.{% else %}Tapping logs the attempt and moves a new lead to Contacted.{% endif %}{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
     {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
     <div class="next-up">
       <span>
@@ -92,7 +114,7 @@
     {% if lead.sms_opt_out %}
       <div class="hint">They texted STOP, so the CRM won't text this number. You can still call.</div>
     {% elif can_text %}
-      <form class="note-form" method="post" action="/leads/{{ lead.id }}/text" hx-post="/leads/{{ lead.id }}/text" hx-target="#lead" hx-swap="outerHTML">
+      <form class="note-form" id="text-box" method="post" action="/leads/{{ lead.id }}/text" hx-post="/leads/{{ lead.id }}/text" hx-target="#lead" hx-swap="outerHTML">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <textarea name="body" placeholder="Text {{ (lead.contact_name or 'them').split(' ')[0] }} from here: Hi, this is {{ principal.user.name.split(' ')[0] }} at {{ principal.tenant.name }}…" required maxlength="1200"></textarea>
         <button class="btn hivis" type="submit">Send text</button>
@@ -191,11 +213,12 @@
             {% elif a.type == 'auto_message' %}Automatic {{ 'text' if a.detail.channel in ('twilio', 'fake', 'log') and a.detail.kind != 'email' else 'message' }} to them{% if not a.detail.delivered %} <span class="who">(not delivered{% if a.detail.error %}: {{ a.detail.error }}{% endif %})</span>{% endif %}
             {% elif a.type == 'appointment' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'conversion_sent' %}{% if a.detail.status == 'failed' %}Not sent to {{ 'Google Ads' if a.detail.platform == 'google_ads' else 'Meta' }} <span class="who">{{ a.body }}</span>{% else %}Sent to ad platform <span class="who">{{ a.body }}</span>{% endif %}
+            {% elif a.type == 'call_attempt' and a.detail.kind == 'crm_call' %}Called through the CRM <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted {{ 'from their phone' if a.detail.via == 'phone' else 'from the app' }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent') %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent') and a.detail.kind != 'crm_call' %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>

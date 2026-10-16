@@ -208,6 +208,29 @@ async def inbound_call(request: Request):
     return Response(content=body, media_type="application/xml")
 
 
+@router.post("/connect/{token}")
+async def connect_call(request: Request, token: str):
+    """Second leg of click-to-call: the client answered; now dial the lead showing the client's business number."""
+    from app.auth import crypto
+
+    await _verified_form(request)
+    data = crypto.read_signed_token(token, salt="connect", max_age_seconds=600)
+    if not data:
+        return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Sorry, this call link has expired.</Say></Response>', media_type="application/xml")
+    with system_db() as conn:
+        lead = conn.execute("SELECT l.*, t.twilio_number, t.name AS tenant_name FROM lead l JOIN tenant t ON t.id = l.tenant_id WHERE l.id = %s", (data["l"],)).fetchone()
+    if lead is None or not lead["phone_e164"] or not lead["twilio_number"]:
+        return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Sorry, that lead has no phone number.</Say></Response>', media_type="application/xml")
+    name = _xml(lead.get("contact_name") or "the lead")
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        f'<Say voice="alice">Connecting you to {name}.</Say>'
+        f'<Dial callerId="{_xml(lead["twilio_number"])}" timeout="30">{_xml(lead["phone_e164"])}</Dial>'
+        "</Response>"
+    )
+    return Response(content=body, media_type="application/xml")
+
+
 @router.post("/status")
 async def delivery_status(request: Request):
     params = await _verified_form(request)

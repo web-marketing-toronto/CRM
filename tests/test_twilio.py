@@ -155,3 +155,43 @@ def test_calls_to_the_texting_number_ring_the_client(client, make_tenant, make_u
     p2 = {"From": "+16475550000", "To": "+17055558888", "CallSid": "CA2"}
     r = client.post("/v1/twilio/voice", data=p2, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", p2, TOKEN)})
     assert r.status_code == 200 and "<Say" in r.text and "<Dial" not in r.text
+
+
+def test_click_to_call_rings_the_client_then_dials_the_lead_from_the_business_number(client, make_tenant, make_user, admin_conn, outbox, login):
+    from app.services import messaging
+    from tests.conftest import csrf_from
+
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    member = make_user("pat@roofco.test", tenant_id=t["id"], role="member", name="Pat", mobile="+17055552000")
+    lead_id = client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"}).json()["lead_id"]
+    login("pat@roofco.test")
+    csrf = csrf_from(client)
+    page = client.get(f"/leads/{lead_id}")
+    assert f'action="/leads/{lead_id}/call"' in page.text and 'href="tel:' not in page.text  # no direct-dial from a personal phone
+    assert 'href="sms:+17055550000?&body=A001' in page.text and 'href="sms:+17055550142"' not in page.text
+    r = client.post(f"/leads/{lead_id}/call", data={"csrf_token": csrf}, headers={"HX-Request": "true"})
+    assert r.status_code == 200 and "Called through the CRM" in r.text
+    assert len(messaging.outbox.calls) == 1
+    call = messaging.outbox.calls[0]
+    assert call["to"] == "+17055552000" and call["from"] == "+17055550000" and "/v1/twilio/connect/" in call["url"]
+    assert admin_conn.execute("SELECT status FROM lead WHERE id = %s", (lead_id,)).fetchone()["status"] == "contacted"
+    # Twilio fetches the connect URL once Pat answers: dial Mike showing the business number.
+    path = call["url"].replace("http://testserver", "")
+    params = {"CallSid": "CA9", "CallStatus": "in-progress"}
+    r = client.post(path, data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver" + path, params, TOKEN)})
+    assert r.status_code == 200 and '<Dial callerId="+17055550000" timeout="30">+17055550142</Dial>' in r.text and "Connecting you to Mike" in r.text
+    # Without a mobile on the account the button explains itself.
+    nomobile = make_user("nm@roofco.test", tenant_id=t["id"], role="member", name="NoMobile")
+    client.post("/logout", data={"csrf_token": csrf})
+    login("nm@roofco.test")
+    csrf = csrf_from(client)
+    page = client.get(f"/leads/{lead_id}")
+    assert 'href="tel:+17055550142"' in page.text  # falls back to a plain dial when we can't ring them
+    assert member["id"] and nomobile["id"]
+
+
+def test_alerts_point_at_the_app_not_the_raw_number_when_the_client_has_a_business_number(client, make_tenant, make_user, admin_conn, outbox):
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"})
+    alert = next(m for m in outbox.sms if m["to"] == "+17055551000")
+    assert "Call or text from http://testserver/leads/" in alert["body"] and "(705) 555-0142" not in alert["body"]

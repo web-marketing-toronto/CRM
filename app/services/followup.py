@@ -270,7 +270,12 @@ def _lead_line(lead: dict) -> str:
     return ", ".join(bits)
 
 
-def _contact_line(lead: dict) -> str:
+def _contact_line(lead: dict, tenant: dict | None = None) -> str:
+    """How to reach the lead. When the client has a business texting number, point at the app (where calls
+    and texts go through that number) rather than printing the raw mobile, which invites a call from a
+    personal phone that the lead would then save."""
+    if tenant is not None and tenant.get("twilio_number"):
+        return f"Call or text from {_lead_url(lead['id'])}"
     parts = []
     if lead.get("phone_e164"):
         parts.append(f"Call {format_phone_display(lead['phone_e164'])}")
@@ -319,7 +324,7 @@ def _area_note(lead: dict, tenant: dict, user: dict | None) -> str:
 def compose(rule: str, lead: dict, tenant: dict, payload: dict, now: datetime, user: dict | None = None) -> tuple[str, str, str]:
     """(sms_text, email_subject, email_text) for a client-facing reminder."""
     who = _lead_line(lead)
-    contact = _contact_line(lead)
+    contact = _contact_line(lead, tenant)
     url = _lead_url(lead["id"])
     src = PLATFORM_LABELS.get(Platform(lead.get("platform", "unknown")), "")
     if rule == "new_alert":
@@ -615,10 +620,10 @@ def run_digests(conn: psycopg.Connection, *, now: datetime | None = None) -> int
             due = conn.execute(sql, params).fetchall()
             if not due:
                 continue
-            lines = [f"- {_lead_line(ld)}: {ld['status'].replace('_', ' ')}, {'arrived' if ld['status'] == 'new' else 'last touched'} {_rel(ld.get('last_touch_at') or ld.get('created_at'), now)}. {_contact_line(ld)}" for ld in due]
+            lines = [f"- {_lead_line(ld)}: {ld['status'].replace('_', ' ')}, {'arrived' if ld['status'] == 'new' else 'last touched'} {_rel(ld.get('last_touch_at') or ld.get('created_at'), now)}. {_contact_line(ld, tenant)}" for ld in due]
             subject = f"{len(due)} lead{'s' if len(due) != 1 else ''} need{'s' if len(due) == 1 else ''} a follow-up today"
             text = f"Good morning. {subject}:\n\n" + "\n".join(lines) + f"\n\nOpen your leads: {get_settings().base_url}/leads"
-            html = _digest_html(subject, due, now)
+            html = _digest_html(subject, due, now, tenant)
             sms = f"{subject}: " + "; ".join(_lead_line(ld) for ld in due[:3]) + (f" and {len(due) - 3} more" if len(due) > 3 else "") + f". {get_settings().base_url}/leads"
             if user.get("notify_email"):
                 messaging.send_email(conn, to=user["email"], subject=subject, text=text, html=html, kind="digest", tenant_id=tenant["id"], user_id=user["id"])
@@ -629,11 +634,11 @@ def run_digests(conn: psycopg.Connection, *, now: datetime | None = None) -> int
     return sent
 
 
-def _digest_html(subject: str, due: list[dict], now: datetime) -> str:
+def _digest_html(subject: str, due: list[dict], now: datetime, tenant: dict | None = None) -> str:
     from html import escape
 
     rows = "".join(
-        f"<tr><td style='padding:8px 10px;border-bottom:1px solid #e6e8e3'><a href='{_lead_url(ld['id'])}' style='color:#16202b;font-weight:700;text-decoration:none'>{escape(_lead_line(ld))}</a><br><span style='color:#4f5a66;font-size:13px'>{escape(ld['status'].replace('_', ' '))}, {'arrived' if ld['status'] == 'new' else 'last touched'} {escape(_rel(ld.get('last_touch_at') or ld.get('created_at'), now))}. {escape(_contact_line(ld))}</span></td></tr>"
+        f"<tr><td style='padding:8px 10px;border-bottom:1px solid #e6e8e3'><a href='{_lead_url(ld['id'])}' style='color:#16202b;font-weight:700;text-decoration:none'>{escape(_lead_line(ld))}</a><br><span style='color:#4f5a66;font-size:13px'>{escape(ld['status'].replace('_', ' '))}, {'arrived' if ld['status'] == 'new' else 'last touched'} {escape(_rel(ld.get('last_touch_at') or ld.get('created_at'), now))}. {escape(_contact_line(ld, tenant))}</span></td></tr>"
         for ld in due
     )
     return f"""<!doctype html><html><body style="margin:0;background:#eef0ec;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#16202b">

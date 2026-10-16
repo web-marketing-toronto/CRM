@@ -287,6 +287,29 @@ def set_appointment(conn: psycopg.Connection, tenant: dict, lead: dict, when: da
     return f"Appointment set for {pretty}."
 
 
+def connect_token(lead_id: UUID, user_id: UUID) -> str:
+    from app.auth import crypto
+
+    return crypto.signed_token({"l": str(lead_id), "u": str(user_id)}, salt="connect")
+
+
+def start_call(conn: psycopg.Connection, tenant: dict, lead: dict, user: dict, *, actor_label: str) -> messaging.SendResult:
+    """Click-to-call: ring the user's mobile from the client's number, then connect them to the lead with the
+    client's number as caller id. Logged as a call attempt."""
+    if not lead.get("phone_e164"):
+        raise lead_svc.LeadError("This lead has no phone number")
+    if not tenant.get("twilio_number"):
+        raise lead_svc.LeadError(f"Calling through the CRM needs a texting number for {tenant['name']}; ask {get_settings().agency_name}")
+    if not user.get("mobile_e164"):
+        raise lead_svc.LeadError("Add your mobile number under Account first; that's the phone we ring")
+    url = f"{get_settings().base_url}/v1/twilio/connect/{connect_token(lead['id'], user['id'])}"
+    result = messaging.start_call(to=user["mobile_e164"], from_=tenant["twilio_number"], connect_url=url)
+    if not result.ok:
+        raise lead_svc.LeadError(f"The call didn't start: {result.error}")
+    lead_svc.log_touch(conn, lead, ActivityType.CALL_ATTEMPT, actor_id=user["id"], actor_label=actor_label, note=f"Called through the CRM from {format_phone_display(tenant['twilio_number'])}", detail={"kind": "crm_call", "provider_id": result.provider_id})
+    return result
+
+
 def send_text(conn: psycopg.Connection, tenant: dict, lead: dict, body: str, *, actor_id: UUID, actor_label: str, via: str = "app") -> messaging.SendResult:
     """A text typed in the app (or relayed from the client's phone). Goes out from the client's number and counts as a touch."""
     body = body.strip()

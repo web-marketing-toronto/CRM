@@ -132,6 +132,8 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),
         "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
+        "relay": bool(full_tenant and followup.relay_enabled(full_tenant)),
+        "can_call": bool(full_tenant and full_tenant.get("twilio_number") and principal.user.get("mobile_e164")),
     }
 
 
@@ -232,6 +234,21 @@ def status(
                     conn, lead, new_status, actor_id=principal.user_id, actor_label=principal.label,
                     deal_value=value, lost_reason=reason, note=note.strip() or None,
                 )
+        except svc.LeadError as exc:
+            return _respond(request, principal, lead_id, error=str(exc))
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/call", dependencies=[Depends(check_csrf)])
+def call_lead(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)]):
+    """Click-to-call through the client's number: the user's phone rings, then the lead is dialled."""
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        try:
+            lead_messages.start_call(conn, tenant, lead, principal.user, actor_label=principal.label)
         except svc.LeadError as exc:
             return _respond(request, principal, lead_id, error=str(exc))
     return _respond(request, principal, lead_id)
