@@ -121,6 +121,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "recent_conversions": recent_conv,
         "show_spend": bool(((tenant.get("settings") or {}).get("reports") or {}).get("show_spend")),
         "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
+        "sms_cfg": {"relay_replies": True, "forward_calls_to": "", **((tenant.get("settings") or {}).get("sms") or {})},
         "field_map_json": json.dumps(tenant["field_map"], indent=2),
         "service_area_json": json.dumps(tenant["service_area"], indent=2),
         "hours_start": _twelve_hour(hours.get("start", "07:00")),
@@ -313,6 +314,9 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
         if not (0 <= call_min <= 600):
             raise ValueError("Minimum call length should be between 0 and 600 seconds")
         ads_cfg = parse_ads(form)
+        forward_to = normalize_phone(get("forward_calls_to")) if get("forward_calls_to") else ""
+        if get("forward_calls_to") and not forward_to:
+            raise ValueError("The call-forwarding number doesn't look like a phone number")
     except ValueError as exc:
         return web.render(request, "admin/tenant.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_tenant_ctx(tenant_id))
     default_assignee = get("default_assignee_id") or None
@@ -333,6 +337,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                     "followup": followup_cfg, "lead_messaging": lead_msg_cfg, "callrail": {"min_seconds": call_min},
                     "meta": {**ads_cfg["meta"], "page_id": meta_page_id}, "google_ads": ads_cfg["google_ads"], "conversions": ads_cfg["conversions"],
                     "reports": {"show_spend": form.get("show_spend") == "on"},
+                    "sms": {"relay_replies": form.get("relay_replies") == "on", "forward_calls_to": forward_to},
                 }), tenant_id,
             ),
         )

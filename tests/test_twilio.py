@@ -49,7 +49,7 @@ def test_lead_reply_is_logged_and_client_alerted(client, make_tenant, make_user,
     r = _post(client, {"From": "+17055550142", "To": "+17055550000", "Body": "Sure, Tuesday works", "MessageSid": "SM3"})
     assert r.status_code == 200 and "<Message>" not in r.text  # nothing automatic back to the lead
     assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'lead_replied'", (lead_id,)).fetchone()["n"] == 1
-    assert any('Mike (A001) replied: "Sure, Tuesday works"' in m["body"] and m["to"] == "+17055551000" for m in outbox.sms)
+    assert any("[A001] Mike: Sure, Tuesday works" in m["body"] and m["to"] == "+17055551000" and m["from"] == "+17055550000" for m in outbox.sms)
     assert admin_conn.execute("SELECT last_reply_at FROM lead WHERE id = %s", (lead_id,)).fetchone()["last_reply_at"] is not None
 
 
@@ -88,3 +88,70 @@ def test_delivery_status_updates_the_log(client, make_tenant, make_user, admin_c
     r = client.post("/v1/twilio/status", data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/status", params, TOKEN)})
     assert r.status_code == 204
     assert admin_conn.execute("SELECT status FROM message_log WHERE provider_id = %s", (row["provider_id"],)).fetchone()["status"] == "delivered"
+
+
+def test_lead_text_is_relayed_to_the_assignees_phone_and_answers_go_back(client, make_tenant, make_user, admin_conn, outbox):
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    lead_id = client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"}).json()["lead_id"]
+    outbox.clear()
+    # Lead texts the client's number.
+    _post(client, {"From": "+17055550142", "To": "+17055550000", "Body": "Sure, Tuesday works", "MessageSid": "R1"})
+    relayed = [m for m in outbox.sms if m["to"] == "+17055551000"]
+    assert len(relayed) == 1 and relayed[0]["from"] == "+17055550000" and relayed[0]["kind"] == "relay"
+    assert relayed[0]["body"].startswith("[A001] Mike: Sure, Tuesday works")
+    assert not [m for m in outbox.sms if m["to"] == "+17055551000" and m["from"] == "+14165550000"]  # no second alert from the agency number
+    # Owner answers from their phone, no ref needed: it goes to Mike from the client's number.
+    outbox.clear()
+    r = _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "Great, see you Tuesday at 10", "MessageSid": "R2"})
+    assert r.status_code == 200 and "<Message>" not in r.text
+    out = [m for m in outbox.sms if m["to"] == "+17055550142"]
+    assert len(out) == 1 and out[0]["from"] == "+17055550000" and out[0]["body"] == "Great, see you Tuesday at 10"
+    act = admin_conn.execute("SELECT body, detail FROM activity WHERE lead_id = %s AND type = 'text_sent' ORDER BY id DESC LIMIT 1", (lead_id,)).fetchone()
+    assert act["body"] == "Great, see you Tuesday at 10" and act["detail"]["via"] == "phone"
+    assert admin_conn.execute("SELECT status FROM lead WHERE id = %s", (lead_id,)).fetchone()["status"] == "contacted"
+    # Codes still work on the same number, and a ref prefix picks a different lead.
+    r = _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "4", "MessageSid": "R3"})
+    assert "Snoozed Mike" in r.text
+    other = client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Sara", "phone": "7055550155"}).json()["lead_id"]
+    outbox.clear()
+    _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "A002 Hi Sara, this is Dan. When suits you?", "MessageSid": "R4"})
+    out = [m for m in outbox.sms if m["to"] == "+17055550155"]
+    assert len(out) == 1 and out[0]["body"] == "Hi Sara, this is Dan. When suits you?"
+    assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'text_sent'", (other,)).fetchone()["n"] == 1
+
+
+def test_relay_without_context_asks_for_a_ref(client, make_tenant, make_user, admin_conn, outbox):
+    _setup(make_tenant, make_user, admin_conn)
+    r = _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "Hello there", "MessageSid": "R5"})
+    assert "Which lead is that for" in r.text and not outbox.sms
+
+
+def test_relay_off_means_agency_alert_and_codes_only(client, make_tenant, make_user, admin_conn, outbox):
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    admin_conn.execute("""UPDATE tenant SET settings = settings || '{"sms": {"relay_replies": false}}' WHERE id = %s""", (t["id"],))
+    client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"})
+    outbox.clear()
+    _post(client, {"From": "+17055550142", "To": "+17055550000", "Body": "Yes please", "MessageSid": "R6"})
+    alert = [m for m in outbox.sms if m["to"] == "+17055551000"]
+    assert len(alert) == 1 and alert[0]["from"] == "+14165550000" and "replied" in alert[0]["body"]
+    r = _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "Great, see you Tuesday", "MessageSid": "R7"})
+    assert r.text.count("<Message>") == 1 and "Codes:" in r.text  # treated as a (bad) code, nothing relayed
+
+
+def test_calls_to_the_texting_number_ring_the_client(client, make_tenant, make_user, admin_conn, outbox):
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    lead_id = client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"}).json()["lead_id"]
+    outbox.clear()
+    params = {"From": "+17055550142", "To": "+17055550000", "CallSid": "CA1", "CallStatus": "ringing"}
+    r = client.post("/v1/twilio/voice", data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", params, TOKEN)})
+    assert r.status_code == 200 and '<Dial callerId="+17055550142" timeout="25">+17055551000</Dial>' in r.text
+    assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'lead_replied'", (lead_id,)).fetchone()["n"] == 1
+    assert not [m for m in outbox.sms if m["to"] == "+17055551000"]  # their phone rang; no extra alert
+    # An explicit forwarding number wins over the owner's mobile.
+    admin_conn.execute("""UPDATE tenant SET settings = settings || '{"sms": {"forward_calls_to": "+17055559000"}}' WHERE id = %s""", (t["id"],))
+    r = client.post("/v1/twilio/voice", data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", params, TOKEN)})
+    assert ">+17055559000</Dial>" in r.text
+    # Unknown number: a polite message, no crash.
+    p2 = {"From": "+16475550000", "To": "+17055558888", "CallSid": "CA2"}
+    r = client.post("/v1/twilio/voice", data=p2, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", p2, TOKEN)})
+    assert r.status_code == 200 and "<Say" in r.text and "<Dial" not in r.text

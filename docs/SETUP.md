@@ -122,7 +122,14 @@ To replace a value later: `printf '%s' 'NEW' | gcloud secrets versions add NAME 
    registration (that is a US requirement; if a client ever texts US numbers, register a 10DLC brand then).
    Upgrade the Twilio account off the free trial first; trial accounts can only text verified numbers.
 2. On **every** number, Messaging → "A message comes in": Webhook, `https://<service>/v1/twilio/sms`, HTTP POST.
-   Delivery receipts are requested per message automatically.
+   On each **client** number also set Voice → "A call comes in": Webhook, `https://<service>/v1/twilio/voice`,
+   HTTP POST, so a lead who calls the number back rings the client's phone (the forwarding number on the client's
+   settings page, else the owner's mobile) with the lead's own number as caller id. Delivery receipts are
+   requested per message automatically.
+   How replies work: a lead's text is relayed from the client's number to the assignee's phone as
+   "[A14] Mike: …"; whatever the assignee texts back to that number goes to the lead, logged as a touch. A text
+   starting with a ref ("A15 Hi Sara…") goes to that lead instead; the codes 1-5, W, L, K, N still work.
+   "Relay lead texts" on the client's settings page turns this off (alerts only, answer from the app).
 3. Put the agency number in `crm-twilio-agency-from`; put each client's number on their settings page
    ("Their texting number").
 4. Set up the three secrets, redeploy, then text a reply code from your own mobile (the one on your Account

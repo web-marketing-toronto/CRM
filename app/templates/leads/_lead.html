@@ -191,7 +191,7 @@
             {% elif a.type == 'auto_message' %}Automatic {{ 'text' if a.detail.channel in ('twilio', 'fake', 'log') and a.detail.kind != 'email' else 'message' }} to them{% if not a.detail.delivered %} <span class="who">(not delivered{% if a.detail.error %}: {{ a.detail.error }}{% endif %})</span>{% endif %}
             {% elif a.type == 'appointment' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'conversion_sent' %}{% if a.detail.status == 'failed' %}Not sent to {{ 'Google Ads' if a.detail.platform == 'google_ads' else 'Meta' }} <span class="who">{{ a.body }}</span>{% else %}Sent to ad platform <span class="who">{{ a.body }}</span>{% endif %}
-            {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted from the app <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted {{ 'from their phone' if a.detail.via == 'phone' else 'from the app' }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>

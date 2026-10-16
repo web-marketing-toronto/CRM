@@ -198,8 +198,9 @@ def on_status_change(conn: psycopg.Connection, tenant: dict, lead: dict, old: Le
         on_touch(conn, tenant, {**lead, "status": new.value}, now=now)
 
 
-def on_lead_replied(conn: psycopg.Connection, tenant: dict, lead: dict, text: str, *, now: datetime | None = None) -> None:
-    """The lead texted (or called) back. Alert now, nudge in a few hours if nobody responds, restart the cadence."""
+def on_lead_replied(conn: psycopg.Connection, tenant: dict, lead: dict, text: str, *, now: datetime | None = None, alert: bool = True) -> None:
+    """The lead texted (or called) back. Alert now, nudge in a few hours if nobody responds, restart the cadence.
+    `alert=False` when the client already knows (their phone just rang)."""
     now = now or datetime.now(UTC)
     lid, tid, uid = lead["id"], tenant["id"], lead.get("assigned_to")
     conn.execute("UPDATE lead SET last_reply_at = %s, next_action_at = %s WHERE id = %s", (now, now, lid))
@@ -208,12 +209,14 @@ def on_lead_replied(conn: psycopg.Connection, tenant: dict, lead: dict, text: st
         conn.execute("UPDATE lead SET status = 'contacted' WHERE id = %s", (lid,))
         lead_svc.log_activity(conn, tid, lid, ActivityType.STATUS_CHANGE, detail={"from": "no_response", "to": "contacted", "auto": True, "because": "lead replied"}, occurred_at=now)
     if lead.get("status") in (LeadStatus.WON.value, LeadStatus.LOST.value):
-        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
+        if alert:
+            schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
         return
     cancel(conn, lid, ("cadence", "reply_nudge", "nudge", "snoozed"))
     cfg = settings_for(tenant)
-    schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
-    schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="reply_nudge", due_at=now + timedelta(hours=float(cfg["reply_nudge_hours"])), key=f"{lid}:reply_nudge:{_ts(now)}", payload={"text": text[:300]})
+    if alert:
+        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
+        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="reply_nudge", due_at=now + timedelta(hours=float(cfg["reply_nudge_hours"])), key=f"{lid}:reply_nudge:{_ts(now)}", payload={"text": text[:300]})
     _schedule_cadence(conn, tenant, lead, now)
 
 
@@ -430,6 +433,53 @@ def _send_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict
     return any_ok
 
 
+def relay_enabled(tenant: dict) -> bool:
+    """Lead texts are forwarded from the client's number to the assignee's phone, and answers relayed back."""
+    sms_cfg = (tenant.get("settings") or {}).get("sms") or {}
+    return bool(tenant.get("twilio_number")) and sms_cfg.get("relay_replies", True)
+
+
+def relay_text(lead: dict, text: str) -> str:
+    name = lead.get("contact_name") or format_phone_display(lead.get("phone_e164")) or "Lead"
+    return f"[{lead['ref_code']}] {name}: {text}\n\nReply to this text to answer them. Codes 1-5, W, L, K, N still work."
+
+
+def _relay_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict, reminder_id: UUID, text: str, subject: str, email_text: str, html: str) -> bool:
+    any_ok = False
+    if user.get("notify_sms") and user.get("mobile_e164"):
+        r = messaging.send_sms(conn, to=user["mobile_e164"], body=relay_text(lead, text), kind="relay", tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id, from_=tenant["twilio_number"])
+        any_ok = any_ok or r.ok
+    if user.get("notify_email") or (not any_ok and user.get("email")):
+        r = messaging.send_email(conn, to=user["email"], subject=subject, text=email_text, html=html, kind="alert", tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id)
+        any_ok = any_ok or r.ok
+    return any_ok
+
+
+# Something a client would type as a reply code, as opposed to a sentence meant for the lead.
+_STRICT_CODE = re.compile(r"^\s*(?:[A-Za-z]\d{3}\s+)?(?:[1-5]|[Ww]\s*[\d,.$]+|[Ll](?:\s+\w+)?|[Kk]|[Nn]\s+.+|\?)\s*$", re.S)
+
+
+def looks_like_code(text: str) -> bool:
+    return bool(_STRICT_CODE.match(text or ""))
+
+
+def relay_target(conn: psycopg.Connection, user: dict, tenant: dict, text: str) -> tuple[dict | None, str]:
+    """Which lead a client's free-text message is for: the ref it starts with, else the lead whose text was
+    most recently relayed to this user. Returns (lead, message_without_ref)."""
+    m = re.match(r"^\s*([A-Za-z]\d{3})\b[\s:,-]*(.*)$", text or "", re.S)
+    if m:
+        lead = conn.execute("SELECT * FROM lead WHERE tenant_id = %s AND ref_code = %s", (tenant["id"], m.group(1).upper())).fetchone()
+        if lead is not None:
+            return lead, m.group(2).strip()
+    last = conn.execute(
+        "SELECT lead_id FROM message_log WHERE user_id = %s AND kind = 'relay' AND direction = 'out' AND lead_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+        (user["id"],),
+    ).fetchone()
+    if last is None:
+        return None, text
+    return conn.execute("SELECT * FROM lead WHERE id = %s", (last["lead_id"],)).fetchone(), text
+
+
 def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_id: UUID | None = None, limit: int = 200) -> DispatchStats:
     now = now or datetime.now(UTC)
     stats = DispatchStats()
@@ -488,9 +538,15 @@ def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_
         recipients = _recipients(conn, tenant["id"], lead.get("assigned_to"))
         sent_any = False
         sms, subject, text = compose(rule, lead, tenant, payload, now)
+        relay = rule == "replied" and relay_enabled(tenant)
         for user in recipients:
             sms, subject, text = compose(rule, lead, tenant, payload, now, user)
             html = _email_html(subject, text, lead, user, rule)
+            if relay:
+                # The lead's words, from the client's own number, so the client can answer from their phone
+                # and the reply comes straight back through the CRM to the lead.
+                sent_any = _relay_to_user(conn, user, tenant, lead, r["id"], payload.get("text", ""), subject, text, html) or sent_any
+                continue
             sent_any = _send_to_user(conn, user, tenant, lead, r["id"], "alert" if rule in ("new_alert", "replied", "resubmit") else "reminder", sms, subject, text, html) or sent_any
         conn.execute("UPDATE reminder SET sent_at = %s WHERE id = %s", (now, r["id"]))
         if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed", "after_appointment"):

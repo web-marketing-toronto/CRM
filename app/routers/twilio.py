@@ -27,10 +27,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from app.config import get_settings
 from app.db import system_db
 from app.models import ActivityType, Channel, Platform
-from app.services import followup, messaging, worker
+from app.services import followup, lead_messages, messaging, worker
 from app.services import leads as lead_svc
 from app.services.attribution import IntakeFields
-from app.services.normalize import normalize_phone
+from app.services.normalize import format_phone_display, normalize_phone
 
 log = logging.getLogger("crm.twilio")
 router = APIRouter(prefix="/v1/twilio", tags=["twilio"])
@@ -95,6 +95,18 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
             users = scoped or users
         if users:
             user = _most_recently_reminded(conn, users)
+            # Free text to the client's own number is a message for a lead, relayed on from that number.
+            if tenant is not None and followup.relay_enabled(tenant) and user["tenant_id"] == tenant["id"] and not followup.looks_like_code(body):
+                lead, message = followup.relay_target(conn, user, tenant, body)
+                if lead is None:
+                    messaging.record_inbound_sms(conn, tenant_id=tenant["id"], lead_id=None, user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
+                    return _twiml("Which lead is that for? Start with their ref, e.g. A14 Yes, Tuesday works. (1-5, W, L, K, N are still the codes.)")
+                messaging.record_inbound_sms(conn, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
+                try:
+                    lead_messages.send_text(conn, tenant, lead, message, actor_id=user["id"], actor_label=user["name"], via="phone")
+                except lead_svc.LeadError as exc:
+                    return _twiml(f"Not sent to {lead.get('contact_name') or lead['ref_code']}: {exc}")
+                return _twiml()  # no confirmation text: the thread on their phone already shows it
             messaging.record_inbound_sms(conn, tenant_id=user["tenant_id"], lead_id=None, user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
             outcome = followup.apply_reply_code(conn, user, body)
             if outcome.lead_id and outcome.handled:
@@ -157,6 +169,43 @@ def _most_recently_reminded(conn, users: list[dict]) -> dict:
             if u["id"] == row["user_id"]:
                 return u
     return users[0]
+
+
+def _xml(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def forward_number(conn, tenant: dict) -> str | None:
+    """Where calls to the client's texting number ring: the setting, else the first owner's mobile."""
+    cfg = (tenant.get("settings") or {}).get("sms") or {}
+    if cfg.get("forward_calls_to"):
+        return cfg["forward_calls_to"]
+    row = conn.execute("SELECT mobile_e164 FROM app_user WHERE tenant_id = %s AND role = 'owner' AND is_active AND mobile_e164 IS NOT NULL ORDER BY created_at LIMIT 1", (tenant["id"],)).fetchone()
+    return row["mobile_e164"] if row else None
+
+
+@router.post("/voice")
+async def inbound_call(request: Request):
+    """A lead calls the client's texting number back: ring the client's phone, showing the lead's number."""
+    params = await _verified_form(request)
+    from_ = normalize_phone(params.get("From", "")) or params.get("From", "")
+    to = normalize_phone(params.get("To", "")) or params.get("To", "")
+    with system_db() as conn:
+        tenant = conn.execute("SELECT * FROM tenant WHERE twilio_number = %s AND is_active", (to,)).fetchone() if to else None
+        target = forward_number(conn, tenant) if tenant else None
+        if tenant is None or not target:
+            body = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Sorry, this number cannot take calls right now. Please text us instead.</Say></Response>'
+            return Response(content=body, media_type="application/xml")
+        lead = conn.execute("SELECT * FROM lead WHERE tenant_id = %s AND phone_e164 = %s ORDER BY created_at DESC LIMIT 1", (tenant["id"], from_)).fetchone()
+        if lead is not None:
+            followup.on_lead_replied(conn, tenant, lead, f"Called the texting number; forwarded to {format_phone_display(target)}", alert=False)
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?><Response>'
+        f'<Dial callerId="{_xml(from_)}" timeout="25">{_xml(target)}</Dial>'
+        f'<Say voice="alice">Sorry, we missed you. Please text this number and {_xml(tenant["name"])} will get right back to you.</Say>'
+        "</Response>"
+    )
+    return Response(content=body, media_type="application/xml")
 
 
 @router.post("/status")

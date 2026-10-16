@@ -287,8 +287,8 @@ def set_appointment(conn: psycopg.Connection, tenant: dict, lead: dict, when: da
     return f"Appointment set for {pretty}."
 
 
-def send_text(conn: psycopg.Connection, tenant: dict, lead: dict, body: str, *, actor_id: UUID, actor_label: str) -> messaging.SendResult:
-    """A text typed in the app. Goes out from the client's number and counts as a touch."""
+def send_text(conn: psycopg.Connection, tenant: dict, lead: dict, body: str, *, actor_id: UUID, actor_label: str, via: str = "app") -> messaging.SendResult:
+    """A text typed in the app (or relayed from the client's phone). Goes out from the client's number and counts as a touch."""
     body = body.strip()
     if not body:
         raise lead_svc.LeadError("Type the message first")
@@ -302,5 +302,5 @@ def send_text(conn: psycopg.Connection, tenant: dict, lead: dict, body: str, *, 
     result = messaging.send_sms(conn, to=lead["phone_e164"], body=body, kind="lead_text", tenant_id=tenant["id"], lead_id=lead["id"], user_id=actor_id, from_=number)
     if not result.ok:
         raise lead_svc.LeadError(f"The text didn't send: {result.error}")
-    lead_svc.log_touch(conn, lead, ActivityType.TEXT_SENT, actor_id=actor_id, actor_label=actor_label, note=body, detail={"kind": "lead_text", "via": "app", "provider_id": result.provider_id})
+    lead_svc.log_touch(conn, lead, ActivityType.TEXT_SENT, actor_id=actor_id, actor_label=actor_label, note=body, detail={"kind": "lead_text", "via": via, "provider_id": result.provider_id})
     return result

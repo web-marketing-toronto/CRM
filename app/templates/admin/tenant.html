@@ -53,6 +53,12 @@
       <p style="font-size:14px"><strong>Also in GTM, once per site:</strong> the Google tag with user-provided data collection on, and the Meta pixel. That is what lets the CRM's Qualified / Won uploads match leads that have no click id.</p>
     </details>
     <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Texting number (Twilio)</summary>
+      <p style="margin-top:10px;font-size:14px">On the client's Twilio number, under Voice &amp; Fax and Messaging, point both webhooks at the CRM (HTTP POST):</p>
+      <dl class="kv"><dt>A message comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/sms</code></dd><dt>A call comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/voice</code></dd></dl>
+      <p style="font-size:14px">Texts from leads land on the lead and are relayed to the assignee's phone from this number; whatever the assignee texts back goes to the lead. Calls to the number ring the forwarding number below (or the owner's mobile) showing the caller's own number, and are logged on the lead.</p>
+    </details>
+    <details style="margin-top:8px">
       <summary style="cursor:pointer;font-weight:600;font-size:14px">CallRail</summary>
       <p style="margin-top:10px;font-size:14px">In CallRail: <em>Settings → Integrations → Webhooks</em> for this client's company, add a <strong>Post-call</strong> webhook:</p>
       <dl class="kv"><dt>Webhook URL</dt><dd><code style="user-select:all">{{ callrail_url }}</code></dd></dl>
@@ -116,9 +122,11 @@
       <div class="field"><label for="default_assignee_id">New leads go to</label>
         <select id="default_assignee_id" name="default_assignee_id"><option value="">Nobody (unassigned)</option>{% for u in users if u.is_active %}<option value="{{ u.id }}" {{ 'selected' if tenant.default_assignee_id == u.id else '' }}>{{ u.name }}</option>{% endfor %}</select></div>
       <div class="field"><label for="twilio_number">Their texting number <span class="dim">(Twilio; blank = agency number)</span></label><input id="twilio_number" name="twilio_number" type="tel" value="{{ tenant.twilio_number or '' }}"></div>
+      <div class="field"><label for="forward_calls_to">Calls to the texting number ring <span class="dim">(blank = owner's mobile)</span></label><input id="forward_calls_to" name="forward_calls_to" type="tel" value="{{ sms_cfg.forward_calls_to | phone if sms_cfg.forward_calls_to else '' }}" placeholder="705 555 0100"></div>
       <div class="field"><label for="meta_page_id">Meta Page id <span class="dim">(for lead ads)</span></label><input id="meta_page_id" name="meta_page_id" type="text" inputmode="numeric" value="{{ meta_page_id }}" placeholder="1234567890"></div>
       <div class="field"><label for="call_min_seconds">Answered call counts as a lead from <span class="dim">(seconds)</span></label><input id="call_min_seconds" name="call_min_seconds" type="text" inputmode="numeric" value="{{ call_min_seconds }}"></div>
     </div>
+    <label class="check" style="margin:-6px 0 10px"><input type="checkbox" name="relay_replies" {{ 'checked' if sms_cfg.relay_replies else '' }}> Relay lead texts to the assignee's phone from the texting number, so they can answer from their phone <span class="dim">(off = alerts only; answer from the app)</span></label>
     <div class="field"><label for="job_types">Job types <span class="dim">(one per line; shows as a dropdown)</span></label><textarea id="job_types" name="job_types" style="min-height:90px">{{ job_types_text }}</textarea></div>
     <div class="field"><label for="service_area">Service area
       <span class="info" tabindex="0" role="button" aria-label="How to fill in the service area">
