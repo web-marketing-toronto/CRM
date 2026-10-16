@@ -398,7 +398,7 @@ def _email_html(title: str, body_text: str, lead: dict, user: dict | None, rule:
         buttons += f"<a href='{action_link(lead['id'], user['id'], 'lost')}' style='display:inline-block;margin:0 8px 8px 0;padding:11px 16px;background:#e6e8e3;color:#4f5a66;font-weight:700;border-radius:6px;text-decoration:none'>Mark lost</a>"
     return f"""<!doctype html><html><body style="margin:0;background:#eef0ec;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#16202b">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px">
-  <div style="background:#16202b;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;font-weight:700">{escape(get_settings().agency_name)} Leads</div>
+  <div style="background:#16202b;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;font-weight:700">{escape(get_settings().agency_name)} CRM</div>
   <div style="background:#fff;padding:20px 18px;border:1px solid #d6d9d3;border-top:0;border-radius:0 0 8px 8px">
     <h2 style="margin:0 0 12px;font-size:19px">{escape(title)}</h2>
     {lines}
@@ -582,7 +582,7 @@ def _digest_html(subject: str, due: list[dict], now: datetime) -> str:
     )
     return f"""<!doctype html><html><body style="margin:0;background:#eef0ec;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#16202b">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px">
-  <div style="background:#16202b;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;font-weight:700">{escape(get_settings().agency_name)} Leads</div>
+  <div style="background:#16202b;color:#fff;padding:14px 18px;border-radius:8px 8px 0 0;font-weight:700">{escape(get_settings().agency_name)} CRM</div>
   <div style="background:#fff;padding:20px 18px;border:1px solid #d6d9d3;border-top:0;border-radius:0 0 8px 8px">
     <h2 style="margin:0 0 12px;font-size:19px">{escape(subject)}</h2>
     <table style="width:100%;border-collapse:collapse">{rows}</table>

@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     smtp_user: str | None = None           # defaults to email_from
     smtp_password: str | None = None
     email_from: str = "leads@web-marketing-toronto.com"
-    email_from_name: str = "WMT Leads"
+    email_from_name: str = "WMT CRM"
 
     # Lead sources. CallRail signs webhooks with the signing key shown next to the webhook in its settings
     # (optional; the per-client key in the URL is required regardless). Meta needs the app secret (to

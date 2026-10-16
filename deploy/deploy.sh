@@ -67,11 +67,12 @@ if gcloud secrets describe crm-google-ads-yaml >/dev/null 2>&1; then
   gcloud secrets add-iam-policy-binding crm-google-ads-yaml --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
 fi
 EMAIL_FROM="${EMAIL_FROM:-leads@web-marketing-toronto.com}"
+EMAIL_FROM_NAME="${EMAIL_FROM_NAME:-WMT CRM}"
 
 gcloud run deploy "$SERVICE" --source . --region="$REGION" --platform=managed \
   --service-account="$SA" \
   --add-cloudsql-instances="$CONNECTION_NAME" \
-  --set-env-vars="ENV=prod,BASE_URL=${URL},COOKIE_SECURE=true,DB_POOL_MAX=6,EMAIL_FROM=${EMAIL_FROM}${EXTRA_ENV}" \
+  --set-env-vars="ENV=prod,BASE_URL=${URL},COOKIE_SECURE=true,DB_POOL_MAX=6,EMAIL_FROM=${EMAIL_FROM},EMAIL_FROM_NAME=${EMAIL_FROM_NAME}${EXTRA_ENV}" \
   --set-secrets="DATABASE_URL=crm-database-url:latest,MIGRATE_DATABASE_URL=crm-migrate-database-url:latest,CRM_APP_PASSWORD=crm-app-password:latest,SECRET_KEY=crm-secret-key:latest,CRON_SECRET=crm-cron-secret:latest${SECRET_FLAGS}" \
   --allow-unauthenticated --min-instances=1 --max-instances=4 --cpu=1 --memory=512Mi --concurrency=40 --port=8080 \
   --execution-environment=gen2 --timeout=60
