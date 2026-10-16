@@ -117,9 +117,10 @@ To replace a value later: `printf '%s' 'NEW' | gcloud secrets versions add NAME 
 
 ### Twilio
 
-1. Buy one Canadian number for the agency (alerts and reminders to clients come from it) and one per
-   client that will text leads. Canadian long codes need a registered campaign for A2P; Twilio walks you
-   through it under Messaging → Regulatory compliance.
+1. Buy one Canadian local number for the agency (alerts and reminders to clients come from it) and one per
+   client that will text leads, each with SMS capability. Canada-to-Canada texting needs no 10DLC campaign
+   registration (that is a US requirement; if a client ever texts US numbers, register a 10DLC brand then).
+   Upgrade the Twilio account off the free trial first; trial accounts can only text verified numbers.
 2. On **every** number, Messaging → "A message comes in": Webhook, `https://<service>/v1/twilio/sms`, HTTP POST.
    Delivery receipts are requested per message automatically.
 3. Put the agency number in `crm-twilio-agency-from`; put each client's number on their settings page
