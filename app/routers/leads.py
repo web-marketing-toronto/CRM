@@ -128,7 +128,11 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         ).fetchone()
         full_tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
         sync = conn.execute("SELECT * FROM conversion_event WHERE lead_id = %s ORDER BY created_at", (lead_id,)).fetchall() if principal.is_agency else []
+        texted_before = any(a["type"] == ActivityType.TEXT_SENT.value for a in activity)
+        # The Text button pre-fills the client's intro message the first time; after that it opens blank.
+        intro = "" if texted_before or not full_tenant or lead.get("status") in ("won", "lost") else lead_messages.intro_text(conn, full_tenant, lead, principal.user)
     return {
+        "intro": intro,
         "sync": sync,
         "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),

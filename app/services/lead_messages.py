@@ -38,6 +38,8 @@ TEMPLATES = {
     "ack": "Thanks {first_name}, this is {assignee_first_name} at {client_name}. Got {request}, I'll call you shortly. Reply STOP to opt out.",
     "decline": "Thanks for reaching out. Unfortunately {job_address} is outside the area we serve, so we can't help with this one. Sorry to miss it.",
     "appointment": "Hi {first_name}, {assignee_first_name} from {client_name} will be there {appointment_day} at {appointment_time} to look at {job}. If you need to reschedule, {reschedule}.",
+    # What the Text button pre-fills the first time someone texts a lead. Not sent automatically.
+    "intro": "Hi {first_name}, thanks for reaching out about {job}. When would be a convenient time to connect and go over what you need? Let me know and we'll get something set up right away. Thanks, {your_name}",
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -54,6 +56,8 @@ PLACEHOLDERS = {
     "name": "their full name",
     "client_name": "the client's business name",
     "assignee_first_name": "first name of whoever the lead is assigned to (or the owner)",
+    "your_name": "in the Text button's pre-filled message, the full name of whoever is texting; in automatic messages, the assignee's",
+    "your_first_name": "same, first name only",
     "job_type": "the work type, if known",
     "town": "the town from the job address, if known",
     "job_address": "the job address, or 'your location' when there isn't one",
@@ -94,13 +98,17 @@ def _town(address: str | None) -> str:
     return ""
 
 
-def _assignee_first(conn: psycopg.Connection, tenant: dict, lead: dict) -> str:
+def _assignee_name(conn: psycopg.Connection, tenant: dict, lead: dict) -> str:
     if lead.get("assigned_to"):
         row = conn.execute("SELECT name FROM app_user WHERE id = %s", (lead["assigned_to"],)).fetchone()
         if row:
-            return _first(row["name"])
+            return row["name"]
     row = conn.execute("SELECT name FROM app_user WHERE tenant_id = %s AND role = 'owner' AND is_active ORDER BY created_at LIMIT 1", (tenant["id"],)).fetchone()
-    return _first(row["name"]) if row else tenant["name"]
+    return row["name"] if row else tenant["name"]
+
+
+def _assignee_first(conn: psycopg.Connection, tenant: dict, lead: dict) -> str:
+    return _first(_assignee_name(conn, tenant, lead))
 
 
 def _reply_to(conn: psycopg.Connection, tenant: dict) -> str | None:
@@ -111,8 +119,11 @@ def _reply_to(conn: psycopg.Connection, tenant: dict) -> str | None:
     return row["email"] if row else None
 
 
-def context(conn: psycopg.Connection, tenant: dict, lead: dict) -> dict[str, str]:
+def context(conn: psycopg.Connection, tenant: dict, lead: dict, *, user: dict | None = None) -> dict[str, str]:
+    """Placeholder values for one lead. `user` is whoever is writing (the Text button); automatic messages
+    speak as the assignee."""
     tz = followup.tz_for(tenant)
+    your_name = (user or {}).get("name") or _assignee_name(conn, tenant, lead)
     job_type = (lead.get("job_type") or "").strip()
     town = _town(lead.get("job_address"))
     if job_type and town:
@@ -138,6 +149,8 @@ def context(conn: psycopg.Connection, tenant: dict, lead: dict) -> dict[str, str
         "name": (lead.get("contact_name") or "").strip(),
         "client_name": tenant["name"],
         "assignee_first_name": _assignee_first(conn, tenant, lead),
+        "your_name": your_name,
+        "your_first_name": _first(your_name),
         "job_type": job_type,
         "town": town,
         "job_address": lead.get("job_address") or "your location",
@@ -159,6 +172,15 @@ def render(template: str, ctx: dict[str, str]) -> str:
     text = re.sub(r"\s+([,.!?])", r"\1", text)  # "Thanks , this" -> "Thanks, this"
     text = re.sub(r" {2,}", " ", text)
     return text.strip()
+
+
+def intro_text(conn: psycopg.Connection, tenant: dict, lead: dict, user: dict) -> str:
+    """The pre-filled first text for the Text button, in the client's wording, signed by whoever is texting."""
+    template = settings_for(tenant)["templates"]["intro"]
+    try:
+        return render(template, context(conn, tenant, lead, user=user))
+    except (KeyError, ValueError, IndexError):
+        return render(TEMPLATES["intro"], context(conn, tenant, lead, user=user))
 
 
 # --- Scheduling (called from followup.on_lead_created) ---------------------------------------

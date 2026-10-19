@@ -262,7 +262,7 @@ def conversion_retry(event_id: UUID, principal: Annotated[Principal, Depends(req
 
 def parse_lead_messaging(form) -> dict:
     templates = {}
-    for key in ("ack", "decline", "appointment"):
+    for key in ("ack", "decline", "appointment", "intro"):
         text = str(form.get(f"tpl_{key}") or "").strip()
         if text and text != lead_messages.TEMPLATES[key]:
             try:

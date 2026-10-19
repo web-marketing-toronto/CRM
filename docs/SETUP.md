@@ -263,7 +263,9 @@ so intake URLs and emails use the real domain.
 - **Someone texts STOP**: recorded on the lead; the CRM never texts that number for that client again
   unless they text START.
 - **Change a client's reminder timings or message wording**: all on their settings page; takes effect for the
-  next lead. The follow-up schedule applies to leads already in the cadence at their next touch.
+  next lead. The follow-up schedule applies to leads already in the cadence at their next touch. The same
+  section holds the **First text**: what the Text button on a lead pre-fills the first time anyone texts
+  that lead (signed with the texter's own name; blank after the first text). It is never sent on its own.
 
 ## Costs at this scale
 

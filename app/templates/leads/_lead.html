@@ -64,7 +64,7 @@
       </a>
       {% endif %}
       {% if relay and principal.user.mobile_e164 %}
-      <a class="act" href="sms:{{ texting_number }}?&body={{ (lead.ref_code ~ ' ') | urlencode }}" title="Opens Messages to the business number; what you type is sent on to {{ lead.contact_name or 'the lead' }}">
+      <a class="act" href="sms:{{ texting_number }}?&body={{ (lead.ref_code ~ ' ' ~ intro) | urlencode }}" title="Opens Messages to the business number; what you type is sent on to {{ lead.contact_name or 'the lead' }}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Text <small>from your phone · via {{ texting_number | phone }}</small>
       </a>
@@ -74,7 +74,7 @@
         Text <small>from here · shows {{ texting_number | phone }}</small>
       </a>
       {% else %}
-      <a class="act" href="sms:{{ lead.phone_e164 }}" data-touch="text">
+      <a class="act" href="sms:{{ lead.phone_e164 }}{% if intro %}?&body={{ intro | urlencode }}{% endif %}" data-touch="text">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Text <small>opens Messages</small>
       </a>
@@ -116,7 +116,7 @@
     {% elif can_text %}
       <form class="note-form" id="text-box" method="post" action="/leads/{{ lead.id }}/text" hx-post="/leads/{{ lead.id }}/text" hx-target="#lead" hx-swap="outerHTML">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="body" placeholder="Text {{ (lead.contact_name or 'them').split(' ')[0] }} from here: Hi, this is {{ principal.user.name.split(' ')[0] }} at {{ principal.tenant.name }}…" required maxlength="1200"></textarea>
+        <textarea name="body" placeholder="Text {{ (lead.contact_name or 'them').split(' ')[0] }} from here: Hi, this is {{ principal.user.name.split(' ')[0] }} at {{ principal.tenant.name }}…" required maxlength="1200">{{ intro }}</textarea>
         <button class="btn hivis" type="submit">Send text</button>
       </form>
       <div class="hint">Sent from {{ texting_number | phone }}; their replies show up below and alert you.</div>
