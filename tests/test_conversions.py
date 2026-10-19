@@ -10,6 +10,7 @@ from app.db import system_db
 from app.models import ActivityType, LeadStatus
 from app.services import adplatforms, conversions
 from app.services import leads as svc
+from tests.conftest import csrf_from
 
 TOR = ZoneInfo("America/Toronto")
 
@@ -213,3 +214,59 @@ def test_google_yaml_credentials_are_read(tmp_path, monkeypatch):
     monkeypatch.setattr(config.get_settings(), "google_ads_yaml", str(y))
     creds = adplatforms.google_creds()
     assert creds.developer_token == "DEVTOKEN" and creds.client_secret == "sec" and creds.refresh_token == "1//refresh" and creds.login_customer_id == "6474164373"
+
+
+# --- The Google Ads connection check on the client page ---------------------------------------------------
+
+def test_google_ads_check_lists_actions_and_flags_problems(client, make_tenant, make_user, admin_conn):
+    from tests.test_dashboard import agency_login
+
+    t = make_tenant("roofco", name="North Ridge Roofing")
+    agency_login(client, make_user, admin_conn)
+    csrf = csrf_from(client)
+    adplatforms.outbox.fake_check = {
+        "creds": "google-ads.yaml", "login_customer_id": "1112223333",
+        "account": {"id": "5556667777", "name": "North Ridge Roofing", "currency": "CAD", "time_zone": "America/Toronto", "manager": False},
+        "actions": [
+            {"id": "900001", "name": "CRM Qualified Lead", "status": "ENABLED", "type": "UPLOAD_CLICKS", "category": "QUALIFIED_LEAD", "primary": False},
+            {"id": "900002", "name": "CRM Closed Won", "status": "ENABLED", "type": "UPLOAD_CLICKS", "category": "CONVERTED_LEAD", "primary": True},
+            {"id": "900003", "name": "Old import", "status": "REMOVED", "type": "UPLOAD_CLICKS", "category": "LEAD", "primary": False},
+        ],
+        "spend_7d": 412.5,
+    }
+    r = client.post(
+        f"/admin/tenants/{t['id']}/google-ads/check",
+        data={"google_customer_id": "555-666-7777", "google_qualified_action": "900001", "google_won_action": "customers/5556667777/conversionActions/900003", "csrf_token": csrf},
+    )
+    assert r.status_code == 200, r.text
+    html = r.text
+    assert "Connected." in html and "North Ridge Roofing" in html and "$412" in html and "1112223333" in html
+    assert "CRM Qualified Lead" in html and "Qualified ✓" in html
+    assert "Old import (900003) is removed" in html          # the configured Won id points at a removed action
+    assert "Use for Qualified" in html and 'value="555-666-7777"' in html  # typed id kept on the page, not saved
+    assert admin_conn.execute("SELECT settings->'google_ads' AS g FROM tenant WHERE id = %s", (t["id"],)).fetchone()["g"] is None
+
+    # A manager account id is called out; a missing id is refused before any call.
+    adplatforms.outbox.fake_check["account"]["manager"] = True
+    html = client.post(f"/admin/tenants/{t['id']}/google-ads/check", data={"google_customer_id": "5556667777", "csrf_token": csrf}).text
+    assert "manager (MCC) account" in html
+    html = client.post(f"/admin/tenants/{t['id']}/google-ads/check", data={"google_customer_id": "", "csrf_token": csrf}).text
+    assert "Not connected." in html and "10-digit" in html
+
+    # A failure from Google comes back in plain words.
+    adplatforms.outbox.fake_check = adplatforms.AdsError("USER_PERMISSION_DENIED: the MCC behind the refresh token does not manage this customer id", retryable=False)
+    html = client.post(f"/admin/tenants/{t['id']}/google-ads/check", data={"google_customer_id": "5556667777", "csrf_token": csrf}).text
+    assert "Not connected." in html and "does not manage this customer id" in html
+
+
+def test_google_error_translation():
+    import httpx
+
+    body = {"error": {"code": 403, "message": "The caller does not have permission", "status": "PERMISSION_DENIED", "details": [
+        {"@type": "type.googleapis.com/google.ads.googleads.v19.errors.GoogleAdsFailure", "errors": [
+            {"errorCode": {"authorizationError": "USER_PERMISSION_DENIED"}, "message": "User doesn't have permission to access customer."}]}]}}
+    r = httpx.Response(403, json=body)
+    assert adplatforms._google_error(r) == "USER_PERMISSION_DENIED: the MCC behind the refresh token does not manage this customer id"
+    r = httpx.Response(400, json={"error": {"code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT", "details": [{"errors": [{"errorCode": {"queryError": "BAD_FIELD_NAME"}, "message": "Unrecognized field"}]}]}})
+    assert adplatforms._google_error(r) == "BAD_FIELD_NAME: Unrecognized field"
+    assert adplatforms._google_error(httpx.Response(502, text="<html>bad gateway")).startswith("Google Ads 502")

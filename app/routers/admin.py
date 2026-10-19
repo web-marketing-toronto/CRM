@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import conversions, followup, importer, lead_messages
+from app.services import adplatforms, conversions, followup, importer, lead_messages
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -247,6 +247,44 @@ def parse_ads(form) -> dict:
         },
         "conversions": {"enabled": form.get("conversions_enabled") == "on", "value_bidding_since": since},
     }
+
+
+@router.post("/tenants/{tenant_id}/google-ads/check", dependencies=[Depends(check_csrf)])
+async def google_ads_check(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    """Prove the Google Ads hookup for this client with the ids typed on the page (nothing is saved or sent)."""
+    form = await request.form()
+    get = lambda k: str(form.get(k) or "").strip()  # noqa: E731
+    ctx = _tenant_ctx(tenant_id)
+    typed = {k: get(f"google_{k}") for k in ("customer_id", "qualified_action", "won_action")}
+    if any(typed.values()):
+        ctx["google_ads"] = {**ctx["google_ads"], **{k: v for k, v in typed.items() if v}}
+    cfg = ctx["google_ads"]
+    try:
+        result = adplatforms.google_check(cfg["customer_id"])
+    except adplatforms.AdsError as exc:
+        return web.render(request, "admin/tenant.html", error=None, notice=None, new_user_password=None, google_check={"ok": False, "error": str(exc)}, **ctx)
+    ids = {a["id"] for a in result["actions"]}
+    def configured(key: str) -> str:
+        # Either the numeric id or customers/…/conversionActions/<id>; compare on the id.
+        return re.sub(r"\D", "", (cfg.get(key) or "").rsplit("/", 1)[-1])
+    q, w = configured("qualified_action"), configured("won_action")
+    problems = []
+    if result["account"]["manager"]:
+        problems.append("That id is a manager (MCC) account. Use the client's own account id; uploads go to the account the clicks belong to.")
+    if not result["actions"]:
+        problems.append("No import-from-clicks conversion actions in this account yet. Create CRM Qualified Lead and CRM Closed Won (see the ⓘ above), then check again.")
+    for label, v in (("Qualified", q), ("Won", w)):
+        if v and v not in ids:
+            problems.append(f"The {label} conversion action id {v} isn't an import-from-clicks action in this account.")
+        elif v:
+            a = next(x for x in result["actions"] if x["id"] == v)
+            if a["status"] != "ENABLED":
+                problems.append(f"{a['name']} ({v}) is {a['status'].lower()}; Google ignores uploads to it.")
+            if a["primary"]:
+                problems.append(f"{a['name']} ({v}) is a primary action; it should stay secondary until there's three months of stage data.")
+    if result["account"]["currency"] and result["account"]["currency"] != "CAD":
+        problems.append(f"The account bills in {result['account']['currency']}; values are sent as CAD.")
+    return web.render(request, "admin/tenant.html", error=None, notice=None, new_user_password=None, google_check={"ok": True, "problems": problems, "qualified": q, "won": w, **result}, **ctx)
 
 
 @router.post("/conversions/{event_id}/retry", dependencies=[Depends(check_csrf)])

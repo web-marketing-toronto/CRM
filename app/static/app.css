@@ -363,3 +363,8 @@ table.data tr.rowlink:hover td { background: var(--signal-soft); }
 /* ---------- Text wording (client-editable first text) ---------- */
 .preview-box { margin-top: 4px; padding: 12px 14px; background: var(--paper); border-radius: var(--radius); }
 .bubble { display: inline-block; max-width: 92%; padding: 10px 14px; background: var(--signal); color: #fff; border-radius: 18px 18px 4px 18px; font-size: 15px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- Google Ads connection check ---------- */
+.gcheck { padding: 12px 14px; border-radius: var(--radius); margin: 0 0 14px; font-size: 14px; border-left: 4px solid var(--won); background: var(--won-soft); }
+.gcheck.bad { border-left-color: var(--alert); background: var(--alert-soft); color: var(--alert); }
+.gcheck-problem { margin-top: 8px; padding: 8px 10px; background: #fff4cc; color: #6b5300; border-radius: 4px; }

@@ -41,12 +41,14 @@ class Outbox:
     meta_events: list[dict[str, Any]] = field(default_factory=list)
     spend_queries: list[dict[str, Any]] = field(default_factory=list)
     fake_spend: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # platform -> rows to return
+    fake_check: dict[str, Any] | None = None  # what google_check returns in fake mode (an AdsError if an Exception)
 
     def clear(self) -> None:
         self.google_conversions.clear()
         self.meta_events.clear()
         self.spend_queries.clear()
         self.fake_spend.clear()
+        self.fake_check = None
 
 
 outbox = Outbox()
@@ -83,6 +85,14 @@ def _yaml_value(text: str, key: str) -> str | None:
     if not m:
         return None
     return m.group(1).strip().strip("'\"") or None
+
+
+def google_creds_source() -> str | None:
+    """Where credentials come from, for the dashboard: 'google-ads.yaml', 'env', or None."""
+    s = get_settings()
+    if google_creds() is None:
+        return None
+    return "google-ads.yaml" if s.google_ads_yaml else "env"
 
 
 def google_creds() -> GoogleCreds | None:
@@ -187,6 +197,83 @@ def google_campaign_spend(customer_id: str, since: date, until: date) -> list[di
                 "spend": int(row["metrics"].get("costMicros", 0)) / 1_000_000, "clicks": int(row["metrics"].get("clicks", 0)), "impressions": int(row["metrics"].get("impressions", 0)),
             })
     return rows
+
+
+def _google_error(r: httpx.Response) -> str:
+    """Google's error JSON into one line a person can act on."""
+    try:
+        err = r.json().get("error", {})
+    except ValueError:
+        return f"Google Ads {r.status_code}: {r.text[:200]}"
+    codes: list[str] = []
+    messages: list[str] = []
+    for d in err.get("details", []):
+        for e in d.get("errors", []):
+            code = e.get("errorCode") or {}
+            codes.extend(str(v) for v in code.values())
+            if e.get("message"):
+                messages.append(e["message"])
+    code = ", ".join(codes) or err.get("status", str(r.status_code))
+    hints = {
+        "DEVELOPER_TOKEN_NOT_APPROVED": "the developer token only works on test accounts until Google approves it",
+        "USER_PERMISSION_DENIED": "the MCC behind the refresh token does not manage this customer id",
+        "CUSTOMER_NOT_FOUND": "no Google Ads account has this customer id",
+        "NOT_ADS_USER": "the Google account behind the refresh token is not a Google Ads user",
+        "OAUTH_TOKEN_REVOKED": "the refresh token was revoked; make a new google-ads.yaml",
+        "DEVELOPER_TOKEN_PROHIBITED": "this developer token can't be used with this OAuth client",
+        "INVALID_CUSTOMER_ID": "the customer id should be 10 digits",
+        "CUSTOMER_NOT_ENABLED": "this Google Ads account is cancelled or suspended",
+    }
+    hint = next((h for c, h in hints.items() if c in code), None)
+    detail = messages[0] if messages else err.get("message", "")
+    return f"{code}: {hint or detail}"[:400]
+
+
+def google_check(customer_id: str) -> dict[str, Any]:
+    """Prove the Google Ads hookup for one client without sending anything: credentials present, OAuth
+    works, the MCC can see the account, and which upload-type conversion actions exist. Raises AdsError
+    with a plain-language reason at whichever step fails."""
+    s = get_settings()
+    customer_id = re.sub(r"\D", "", customer_id or "")
+    if len(customer_id) != 10:
+        raise AdsError("Enter the client's 10-digit Google Ads customer id first", retryable=False)
+    if s.ads_provider == "fake":
+        if isinstance(outbox.fake_check, Exception):
+            raise outbox.fake_check
+        return outbox.fake_check or {"creds": "env", "login_customer_id": "1112223333", "account": {"id": customer_id, "name": "Fake Client", "currency": "CAD", "time_zone": "America/Toronto", "manager": False}, "actions": [], "spend_7d": 0.0}
+    if s.ads_provider == "log":
+        raise AdsError("ADS_PROVIDER is 'log' on this server; nothing is really sent to Google", retryable=False)
+    creds = google_creds()
+    if creds is None:
+        raise AdsError("No Google Ads credentials on this server: the crm-google-ads-yaml secret is not deployed (deploy/deploy.sh mounts it when it exists)", retryable=False)
+    headers = _google_headers(creds)  # raises AdsError if the OAuth refresh fails
+
+    def query(gaql: str, timeout: int = 30) -> list[dict[str, Any]]:
+        try:
+            r = httpx.post(f"{GOOGLE_API}/customers/{customer_id}/googleAds:searchStream", json={"query": gaql}, headers=headers, timeout=timeout)
+        except httpx.HTTPError as exc:
+            raise AdsError(f"Google Ads unreachable: {exc}") from exc
+        if r.status_code >= 300:
+            raise AdsError(_google_error(r), retryable=r.status_code >= 500)
+        return [row for chunk in r.json() for row in chunk.get("results", [])]
+
+    acct = query("SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.manager FROM customer")
+    c = (acct[0] if acct else {}).get("customer", {})
+    account = {"id": str(c.get("id", customer_id)), "name": c.get("descriptiveName", ""), "currency": c.get("currencyCode", ""), "time_zone": c.get("timeZone", ""), "manager": bool(c.get("manager"))}
+    rows = query(
+        "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.primary_for_goal "
+        "FROM conversion_action WHERE conversion_action.type IN ('UPLOAD_CLICKS', 'UPLOAD_CALLS') ORDER BY conversion_action.name"
+    )
+    actions = [
+        {
+            "id": str(r["conversionAction"]["id"]), "name": r["conversionAction"].get("name", ""), "status": r["conversionAction"].get("status", ""),
+            "type": r["conversionAction"].get("type", ""), "category": r["conversionAction"].get("category", ""), "primary": bool(r["conversionAction"].get("primaryForGoal")),
+        }
+        for r in rows
+    ]
+    spend = query("SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_7_DAYS")
+    spend_7d = sum(int(r.get("metrics", {}).get("costMicros", 0)) for r in spend) / 1_000_000
+    return {"creds": google_creds_source(), "login_customer_id": creds.login_customer_id, "account": account, "actions": actions, "spend_7d": spend_7d}
 
 
 # --- Meta ----------------------------------------------------------------------------------------

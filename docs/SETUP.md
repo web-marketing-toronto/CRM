@@ -214,6 +214,37 @@ works (set `channel` to `meta_lead_ad`).
 Policy: both actions stay secondary until a client has about three months of stage data; when campaigns
 move to value-based bidding, record the date on the client's settings page so reports can show before/after.
 
+#### Checking Google Ads is working
+
+Four layers, each provable on its own. Stop at the first one that fails.
+
+1. **Credentials reach the server.** Dashboard → *Pipes* → *Ad platforms* says "Google: credentials loaded
+   (google-ads.yaml)". If it says no credentials, the `crm-google-ads-yaml` secret doesn't exist or the deploy
+   ran before it did: `gcloud secrets create crm-google-ads-yaml --data-file=google-ads.yaml …` then redeploy.
+2. **The MCC can see the client's account.** Client settings → *Conversion uploads* → type the customer id →
+   **Check Google Ads connection**. It signs in with the refresh token, reads the account name, currency and
+   last-7-day spend, and lists every import-from-clicks conversion action with its id and status. Errors come
+   back in plain words (developer token not approved, MCC doesn't manage that account, wrong id…). Nothing is
+   saved or sent.
+3. **The conversion actions are right.** In that same result, use *Use for Qualified / Use for Won* to fill
+   the ids, then Save. The check flags an id that points at a removed action, a primary action (keep them
+   secondary for the first three months), or a manager account id.
+4. **A real upload is accepted.** Add a lead by hand with an email address (not a test lead; those never
+   upload), move it to Contacted. Within a minute the lead's *Ad platform sync* table (agency view) shows
+   *Qualified → Google Ads · sent*. Google answers synchronously, so "sent" means Google accepted it;
+   a rejection shows the reason on the same row and *Retry now* re-queues it. Then delete the lead.
+
+   What "accepted" does not mean: that it will count. A lead without a click id is matched later on hashed
+   email/phone against the Google tag's user-provided data from the site, which needs step 3 under
+   "Google Ads" above. Google Ads → Goals → Conversions → the action → *Diagnostics* shows uploads and
+   match rate after a few hours; the Conversions column in reports fills in over 1–3 days, and only for
+   clicks that actually came from an ad.
+
+**Attribution (the other direction)** is checked on the site: open the client's page as
+`https://their-site.com/?gclid=TEST123`, submit the form, and the lead shows a Google Ads chip with
+*Google click: yes* under its source. If it shows Unknown, `wmt.js` isn't on the page or the form posts
+without the hidden fields (see step 5).
+
 ### Spend
 
 Nightly after 04:00 Toronto the tick pulls yesterday's and the day before's campaign spend for every client

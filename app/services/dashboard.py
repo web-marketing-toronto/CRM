@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 
 from app.config import get_settings
+from app.services import adplatforms
 
 STALE_NEW_HOURS = 24  # a New lead nobody has touched for this long is the agency's problem too
 AWAITING_REPLY_HOURS = 2  # a lead who texted back and has waited this long
@@ -216,7 +217,9 @@ def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
         "email_provider": s.email_provider,
         "email_live": s.email_provider in ("smtp", "postmark", "sendgrid"),
         "email_from": s.email_from,
-        "ads_live": s.ads_provider == "live",
+        "ads_live": s.ads_provider == "live", "ads_provider": s.ads_provider,
+        "google_creds": adplatforms.google_creds_source(),
+        "meta_configured": bool(s.meta_app_secret and s.meta_access_token),
         **m,
         **jobs,
         "tick_late": tick_late,

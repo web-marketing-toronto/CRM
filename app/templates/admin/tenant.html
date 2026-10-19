@@ -224,6 +224,42 @@
         <div class="field"><label for="google_qualified_value" class="dim" style="font-weight:500">Value sent with Qualified lead (CAD)</label><input id="google_qualified_value" name="google_qualified_value" type="text" inputmode="decimal" value="{{ google_ads.qualified_value or '' }}" placeholder="0"></div>
         <div class="field"><label for="google_qualified_action" class="dim" style="font-weight:500">Conversion action: CRM Qualified Lead</label><input id="google_qualified_action" name="google_qualified_action" type="text" value="{{ google_ads.qualified_action }}" placeholder="conversion action id"></div>
         <div class="field"><label for="google_won_action" class="dim" style="font-weight:500">Conversion action: CRM Closed Won</label><input id="google_won_action" name="google_won_action" type="text" value="{{ google_ads.won_action }}" placeholder="conversion action id"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-4px 0 14px">
+        <button class="btn ghost small" type="submit" formaction="/admin/tenants/{{ tenant.id }}/google-ads/check" formnovalidate>Check Google Ads connection</button>
+        <span class="dim" style="font-size:13px">Uses the ids typed above without saving them. Nothing is sent to Google.</span>
+      </div>
+      {% if google_check %}
+      <div class="gcheck {{ 'ok' if google_check.ok else 'bad' }}">
+        {% if not google_check.ok %}
+        <strong>Not connected.</strong> {{ google_check.error }}
+        {% else %}
+        <div><strong>Connected.</strong> Signed in through MCC {{ google_check.login_customer_id or '—' }} ({{ google_check.creds }}) → <strong>{{ google_check.account.name or 'unnamed account' }}</strong> {{ google_check.account.id }}{% if google_check.account.currency %} · {{ google_check.account.currency }}{% endif %}{% if google_check.account.time_zone %} · {{ google_check.account.time_zone }}{% endif %} · spent {{ google_check.spend_7d | money }} in the last 7 days.</div>
+        {% for p in google_check.problems %}<div class="gcheck-problem">{{ p }}</div>{% endfor %}
+        {% if google_check.actions %}
+        <table class="data" style="margin-top:10px;background:var(--card)">
+          <thead><tr><th>Conversion action</th><th>Id</th><th>Status</th><th>Goal</th><th></th></tr></thead>
+          <tbody>
+          {% for a in google_check.actions %}
+          <tr>
+            <td>{{ a.name }}{% if a.id == google_check.qualified %} <span class="pill s-won">Qualified ✓</span>{% endif %}{% if a.id == google_check.won %} <span class="pill s-won">Won ✓</span>{% endif %}</td>
+            <td><code>{{ a.id }}</code></td>
+            <td>{{ a.status | lower }}</td>
+            <td>{{ 'primary' if a.primary else 'secondary' }} · {{ a.category | lower | replace('_', ' ') }}</td>
+            <td style="white-space:nowrap;text-align:right">
+              <button class="btn ghost small" type="button" onclick="document.getElementById('google_qualified_action').value='{{ a.id }}'">Use for Qualified</button>
+              <button class="btn ghost small" type="button" onclick="document.getElementById('google_won_action').value='{{ a.id }}'">Use for Won</button>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <div class="dim" style="font-size:13px;margin-top:8px">"Use for…" fills the field above; press <strong>Save</strong> at the bottom to keep it.</div>
+        {% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
+      <div class="grid-2">
         <div class="field"><label for="meta_dataset_id" class="dim" style="font-weight:500">Meta dataset (pixel) id</label><input id="meta_dataset_id" name="meta_dataset_id" type="text" inputmode="numeric" value="{{ meta_cfg.dataset_id }}"></div>
         <div class="field"><label for="meta_ad_account_id" class="dim" style="font-weight:500">Meta ad account id <span class="dim">(for spend)</span></label><input id="meta_ad_account_id" name="meta_ad_account_id" type="text" inputmode="numeric" value="{{ meta_cfg.ad_account_id }}" placeholder="act_… digits"></div>
         <div class="field"><label for="meta_qualified_event" class="dim" style="font-weight:500">Meta event name: qualified</label><input id="meta_qualified_event" name="meta_qualified_event" type="text" value="{{ meta_cfg.qualified_event }}"></div>

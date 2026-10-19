@@ -103,7 +103,8 @@
         </div>
         <div class="pipe {{ 'bad' if pipes.conv_failed else ('good' if pipes.ads_live else 'off') }}">
           <dt>Ad platforms</dt>
-          <dd>{% if pipes.conv_pending or pipes.conv_failed %}{{ pipes.conv_pending }} conversion{{ '' if pipes.conv_pending == 1 else 's' }} waiting{% if pipes.conv_failed %} · <strong>{{ pipes.conv_failed }} failed</strong>{% endif %}{% else %}no uploads waiting{% endif %}
+          <dd>{% if not pipes.ads_live %}provider <code>{{ pipes.ads_provider }}</code> · nothing is really sent{% else %}Google: {% if pipes.google_creds %}credentials loaded ({{ pipes.google_creds }}){% else %}<strong>no credentials</strong> (crm-google-ads-yaml not deployed){% endif %} · Meta: {% if pipes.meta_configured %}app token loaded{% else %}not configured{% endif %}{% endif %}
+            <br>{% if pipes.conv_pending or pipes.conv_failed %}{{ pipes.conv_pending }} conversion{{ '' if pipes.conv_pending == 1 else 's' }} waiting{% if pipes.conv_failed %} · <strong>{{ pipes.conv_failed }} failed</strong>{% endif %}{% else %}no uploads waiting{% endif %}
             {% if pipes.conv_last_sent %}<br>last upload {{ pipes.conv_last_sent | relative }}{% endif %}
             {% if pipes.spend_at %}<br>spend pulled {{ pipes.spend_at | relative }}{% endif %}</dd>
         </div>
