@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 
 from app.config import get_settings
-from app.services import adplatforms
+from app.services import adplatforms, email_intake
 
 STALE_NEW_HOURS = 24  # a New lead nobody has touched for this long is the agency's problem too
 AWAITING_REPLY_HOURS = 2  # a lead who texted back and has waited this long
@@ -203,11 +203,16 @@ def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
     jobs = conn.execute(
         """
         SELECT (SELECT max(finished_at) FROM job_run WHERE name = 'tick') AS tick_at,
+               (SELECT max(finished_at) FROM job_run WHERE name = 'email_intake') AS mail_at,
+               (SELECT detail->>'error' FROM job_run WHERE name = 'email_intake' ORDER BY finished_at DESC NULLS LAST LIMIT 1) AS mail_error,
+               (SELECT count(*) FROM inbound_email WHERE status IN ('lead', 'duplicate') AND created_at > %(now)s - interval '24 hours') AS mail_leads_24h,
+               (SELECT count(*) FROM inbound_email WHERE status = 'rejected' AND created_at > %(now)s - interval '24 hours') AS mail_rejected_24h,
                (SELECT max(finished_at) FROM job_run WHERE name = 'spend') AS spend_at,
                (SELECT count(*) FROM conversion_event WHERE status = 'pending') AS conv_pending,
                (SELECT count(*) FROM conversion_event WHERE status = 'failed') AS conv_failed,
                (SELECT max(sent_at) FROM conversion_event WHERE status = 'sent') AS conv_last_sent
-        """
+        """,
+        {"now": now},
     ).fetchone()
     tick_late = jobs["tick_at"] is None or (now - jobs["tick_at"]) > timedelta(minutes=HEARTBEAT_LATE_MINUTES)
     return {
@@ -219,6 +224,8 @@ def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
         "email_from": s.email_from,
         "ads_live": s.ads_provider == "live", "ads_provider": s.ads_provider,
         "google_creds": adplatforms.google_creds_source(),
+        "mail_enabled": email_intake.enabled(), "mail_user": s.imap_user or s.smtp_user or s.email_from,
+        "mail_late": jobs["mail_at"] is None or (now - jobs["mail_at"]) > timedelta(minutes=HEARTBEAT_LATE_MINUTES),
         "meta_configured": bool(s.meta_app_secret and s.meta_access_token),
         **m,
         **jobs,

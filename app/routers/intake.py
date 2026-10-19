@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.config import get_settings
 from app.db import system_db
@@ -25,6 +25,7 @@ from app.services.leads import LeadError, create_from_intake
 
 log = logging.getLogger("crm.intake")
 router = APIRouter(prefix="/v1/intake", tags=["intake"])
+beacon_router = APIRouter(prefix="/v1", tags=["intake"])
 
 MAX_BODY = 256 * 1024
 
@@ -113,6 +114,42 @@ async def intake(slug: str, request: Request, background: BackgroundTasks, key: 
         },
         status_code=201 if result.created else 200,
     )
+
+
+# --- Attribution beacons from wmt.js ------------------------------------------------------------------
+
+BEACON_MAX = 16 * 1024
+_CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "86400"}
+
+
+@beacon_router.options("/beacon/{slug}/{public_key}")
+def beacon_preflight(slug: str, public_key: str):
+    return Response(status_code=204, headers=_CORS)
+
+
+@beacon_router.post("/beacon/{slug}/{public_key}")
+async def beacon(slug: str, public_key: str, request: Request):
+    """wmt.js posts here when a form on the client's site is submitted: who (email/phone) plus the ad
+    details it has been keeping. Public token, so a bad one is simply ignored and nothing is created."""
+    raw = await request.body()
+    if len(raw) > BEACON_MAX:
+        return Response(status_code=204, headers=_CORS)
+    try:
+        data = json.loads(raw.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        return Response(status_code=204, headers=_CORS)
+    if not isinstance(data, dict):
+        return Response(status_code=204, headers=_CORS)
+    fwd = request.headers.get("x-forwarded-for")
+    ip = (fwd.split(",")[0].strip() if fwd else None) or (request.client.host if request.client else None)
+    with system_db() as conn:
+        tenant = conn.execute("SELECT * FROM tenant WHERE slug = %s AND is_active", (slug,)).fetchone()
+        if tenant is None or not hmac.compare_digest(tenant["public_key"], public_key):
+            return Response(status_code=204, headers=_CORS)
+        from app.services import beacons
+
+        beacons.record(conn, tenant, data, ip=ip, user_agent=(request.headers.get("user-agent") or "")[:300])
+    return Response(status_code=204, headers=_CORS)
 
 
 @router.get("/{slug}/{key}")

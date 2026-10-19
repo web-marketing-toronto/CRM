@@ -56,7 +56,9 @@ for pair in "${OPTIONAL_SECRETS[@]}"; do
     gcloud secrets add-iam-policy-binding "$name" --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
     case "$var" in
       TWILIO_AUTH_TOKEN) EXTRA_ENV="${EXTRA_ENV},SMS_PROVIDER=twilio" ;;
-      SMTP_PASSWORD) EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=smtp,SMTP_HOST=${SMTP_HOST:-smtp.gmail.com},SMTP_PORT=${SMTP_PORT:-587}"; [[ -n "${SMTP_USER:-}" ]] && EXTRA_ENV="${EXTRA_ENV},SMTP_USER=${SMTP_USER}" ;;
+      SMTP_PASSWORD) EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=smtp,SMTP_HOST=${SMTP_HOST:-smtp.gmail.com},SMTP_PORT=${SMTP_PORT:-587}"; [[ -n "${SMTP_USER:-}" ]] && EXTRA_ENV="${EXTRA_ENV},SMTP_USER=${SMTP_USER}"
+                     # Leads by email: read the same mailbox over IMAP (EMAIL_INTAKE=off to disable).
+                     [[ "${EMAIL_INTAKE:-on}" == "off" ]] || EXTRA_ENV="${EXTRA_ENV},IMAP_HOST=${IMAP_HOST:-imap.gmail.com}" ;;
       POSTMARK_TOKEN) [[ "$EXTRA_ENV" == *EMAIL_PROVIDER* ]] || EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=postmark" ;;
       SENDGRID_API_KEY) [[ "$EXTRA_ENV" == *EMAIL_PROVIDER* ]] || EXTRA_ENV="${EXTRA_ENV},EMAIL_PROVIDER=sendgrid" ;;
     esac

@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(intake.router)
+    app.include_router(intake.beacon_router)
     app.include_router(sources.router)
     app.include_router(auth.router)
     app.include_router(account.router)

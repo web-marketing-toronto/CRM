@@ -23,9 +23,14 @@
   <div class="panel">
     <p class="muted" style="font-size:14px">Every form, Zapier zap and ad platform for this client posts to this URL. Keep it private; anyone with it can create leads.</p>
     <dl class="kv">
-      <dt>Intake URL</dt><dd><code style="user-select:all">{{ intake_url }}</code></dd>
+      <dt>Intake URL</dt><dd><code style="user-select:all">{{ intake_url }}</code><br><span class="dim" style="font-size:12px">website forms, Zapier, Shopify Flow</span></dd>
+      <dt>CallRail post-call webhook</dt><dd><code style="user-select:all">{{ callrail_url }}</code><br><span class="dim" style="font-size:12px">CallRail → the client's company → Settings → Integrations → Webhooks → Post-call</span></dd>
+      <dt>Google lead form webhook</dt><dd><code style="user-select:all">{{ google_leads_url }}</code><br><span class="dim" style="font-size:12px">key: <code style="user-select:all">{{ tenant.intake_key }}</code></span></dd>
+      <dt>Leads by email</dt><dd>{% if intake_email %}<code style="user-select:all">{{ intake_email }}</code><br><span class="dim" style="font-size:12px">RealtyNinja Lead BCC, Wix / Squarespace notifications; details below</span>{% else %}<span class="dim">not enabled on this server (IMAP_HOST); would be <code>{{ intake_email_possible }}</code></span>{% endif %}</dd>
+      <dt>Attribution snippet</dt><dd><code style="user-select:all">&lt;script src="{{ snippet_url }}" async&gt;&lt;/script&gt;</code><br><span class="dim" style="font-size:12px">GTM Custom HTML tag on All Pages, or RealtyNinja Custom Header Code</span></dd>
       <dt>Short name</dt><dd>{{ tenant.slug }}</dd>
     </dl>
+    <p class="dim" style="font-size:13px;margin:10px 0 0">Details for each, below.</p>
     <details style="margin-top:12px">
       <summary style="cursor:pointer;font-weight:600;font-size:14px">How to connect a form</summary>
       <p style="margin-top:10px;font-size:14px"><strong>WordPress (Elementor Pro, WPForms, Gravity Forms):</strong> in the form's actions, add a Webhook pointing at the URL above. Field names are matched automatically (name, email, phone, address, message); anything unusual goes in the field map below.</p>
@@ -45,11 +50,18 @@
   -d '{"name":"Test Lead","phone":"705 555 0100","job_type":"Test","message":"Delete me"}'</pre>
     </details>
     <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Leads by email (RealtyNinja, Wix, Squarespace, anything that can only email)</summary>
+      <p style="margin-top:10px;font-size:14px">Have the site send (or BCC) its lead notification to <code style="user-select:all">{{ intake_email or intake_email_possible }}</code>. The CRM reads the mailbox every minute, picks name, email, phone, message and address out of the email (labels like <em>Name:</em>, <em>Phone:</em>, or a two-column table), and creates the lead exactly as a form post would: same alerts, same follow-ups. A label the CRM doesn't recognise goes in the field map below, with the label on the left.</p>
+      <p style="font-size:14px"><strong>RealtyNinja:</strong> Settings → Leads → <em>Lead BCC Email</em> → paste the address → Apply Changes. Covers their contact, buyer, seller, listing and showing-request forms. Also add the attribution snippet below under Settings → Custom Code → <em>Custom Header Code</em>, so the lead keeps its ad details.</p>
+      <p style="font-size:14px"><strong>Wix:</strong> Automations → when a form is submitted → send an email → to this address (one automation per form, or one for all forms). <strong>Squarespace:</strong> the form's Storage → Email → this address. <strong>Anything else:</strong> if it can email a notification, it can send it here.</p>
+      <p style="font-size:14px"><strong>Test:</strong> submit the site's form once; the lead should appear within two minutes. If it doesn't, the Dashboard's <em>Pipes</em> panel shows whether the mailbox was read and whether the email was unreadable (then send the email to {{ settings.agency_name }} to add its labels to the field map).</p>
+    </details>
+    <details style="margin-top:8px">
       <summary style="cursor:pointer;font-weight:600;font-size:14px">Attribution snippet (which ad brought the lead)</summary>
       <p style="margin-top:10px;font-size:14px">Add this to every page of the client's site, in Google Tag Manager as a <strong>Custom HTML</strong> tag firing on <em>All Pages</em> (or in the theme's footer). It remembers gclid / fbclid / UTMs for 90 days and fills them into every form, so a lead that converts three visits later is still credited to the ad.</p>
 <pre class="snippet">&lt;script src="{{ snippet_url }}" async&gt;&lt;/script&gt;</pre>
       <p style="font-size:14px"><strong>WordPress forms:</strong> Elementor Pro, WPForms and Gravity post only the fields they know about, so add hidden fields named <code>gclid</code>, <code>fbclid</code>, <code>utm_source</code>, <code>utm_medium</code>, <code>utm_campaign</code>, <code>utm_term</code>, <code>landing_page</code> and <code>referrer</code> to the form (hidden-field type, no default value). The snippet fills them. Forms that post every input (custom HTML, Shopify theme forms) need nothing extra.</p>
-      <p style="font-size:14px"><strong>Wix / Squarespace:</strong> their form builders mostly can't carry hidden fields; those leads arrive as "Website" without the ad detail. Enhanced Conversions (phase 4) still matches them to the ad by email and phone.</p>
+      <p style="font-size:14px"><strong>RealtyNinja / Wix / Squarespace and other platform forms:</strong> their forms post to their own servers and can't carry hidden fields, so the snippet does it the other way round: when a form with an email or phone field is submitted, it sends those plus the ad details straight to the CRM, and when the lead itself arrives (by email, Zapier or a call) within 48 hours the CRM joins the two by email or phone. The <code>?c=…</code> on the snippet URL above is what makes that work; it is a public key and can't create leads.</p>
       <p style="font-size:14px"><strong>Also in GTM, once per site:</strong> the Google tag with user-provided data collection on, and the Meta pixel. That is what lets the CRM's Qualified / Won uploads match leads that have no click id.</p>
     </details>
     <details style="margin-top:8px">

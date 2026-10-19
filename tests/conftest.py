@@ -59,7 +59,7 @@ def database() -> Iterator[None]:
 def clean_tables() -> Iterator[None]:
     yield
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
-        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit, message_log, sms_opt_out, import_batch, job_run RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE tenant, app_user, session, lead, lead_source, activity, reminder, conversion_event, ad_spend, audit, message_log, sms_opt_out, import_batch, job_run, attribution_beacon, inbound_email RESTART IDENTITY CASCADE")
 
 
 @pytest.fixture(autouse=True)

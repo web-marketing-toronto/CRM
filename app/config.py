@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_user: str | None = None           # defaults to email_from
     smtp_password: str | None = None
+    # Leads by email: the minute tick reads this mailbox (same app password as SMTP) for messages sent to
+    # the per-client plus-addresses. Blank host = off.
+    imap_host: str | None = None           # e.g. imap.gmail.com
+    imap_port: int = 993
+    imap_user: str | None = None           # defaults to smtp_user, then email_from
     email_from: str = "leads@web-marketing-toronto.com"
     email_from_name: str = "WMT CRM"
 

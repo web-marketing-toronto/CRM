@@ -79,10 +79,24 @@ skipped and why), then import. Imported leads carry an "Imported, review" tag an
 "To review" tab; they never trigger reminders or texts, and the tag clears the first time the client touches
 them or sets a status.
 
-**Attribution snippet**: `https://<service>/static/wmt.js` on every page of the client's site (GTM Custom HTML
-tag on All Pages). It keeps gclid / fbclid / UTMs for 90 days and fills them into every form; WordPress forms
-need hidden fields with those names (the client page lists them). Wix and Squarespace forms mostly can't carry
-them; those leads show as "Website".
+- **Sites that can only email** (RealtyNinja, Wix, Squarespace, Houzz…): every client has a **Leads by email**
+  address on their page, `crm+<client>.<token>@web-marketing-toronto.com`. The site sends or BCCs its lead
+  notification there; the CRM reads the crm@ mailbox over IMAP every minute, pulls name / email / phone /
+  message / address out of the email (labelled lines or a two-column table, with the client's field map for
+  odd labels) and makes the lead through the normal path. RealtyNinja: Settings → Leads → *Lead BCC Email*.
+  Wix: Automations → form submitted → send email. Squarespace: form Storage → Email. Needs IMAP enabled on
+  the crm@ mailbox (Gmail → Settings → Forwarding and POP/IMAP → Enable IMAP); the deploy turns the reader on
+  whenever SMTP is wired (`EMAIL_INTAKE=off` to stop it). The Dashboard's *Pipes* shows when the mailbox was
+  last read and how many emails became leads or couldn't be read.
+
+**Attribution snippet**: the client page's snippet URL (`…/static/wmt.js?c=<client>.<public key>`) on every
+page of the site (GTM Custom HTML tag on All Pages; RealtyNinja: Settings → Custom Code → Custom Header Code).
+It keeps gclid / fbclid / UTMs for 90 days and fills them into every form; WordPress forms need hidden fields
+with those names (the client page lists them). Platform forms that post to their own servers (RealtyNinja, Wix,
+Squarespace) can't carry them, so the snippet also sends a **beacon** to the CRM when such a form is
+submitted: the email/phone typed in plus the ad details. When the lead arrives within 48 hours by any route
+(email, Zapier, a call) the CRM joins the two by email or phone, so the lead still shows which ad brought it.
+The `c=` key is public and can't create leads.
 
 **CallRail**: per client, a Post-call webhook to the CallRail URL shown on the client page. Optional: put the
 webhook signing key in Secret Manager as `crm-callrail-signing-key` and redeploy; then every call payload is

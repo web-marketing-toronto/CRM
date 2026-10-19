@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import adplatforms, conversions, followup, importer, lead_messages
+from app.services import adplatforms, conversions, email_intake, followup, importer, lead_messages
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -113,7 +113,9 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "google_leads_url": f"{settings.base_url}/v1/google-leads/{tenant['slug']}/{tenant['intake_key']}",
         "meta_webhook_url": f"{settings.base_url}/v1/meta/webhook",
         "meta_configured": bool(settings.meta_app_secret and settings.meta_access_token),
-        "snippet_url": f"{settings.base_url}/static/wmt.js",
+        "snippet_url": f"{settings.base_url}/static/wmt.js?c={tenant['slug']}.{tenant['public_key']}",
+        "intake_email": email_intake.address_for(tenant) if email_intake.enabled() else None,
+        "intake_email_possible": email_intake.address_for(tenant),
         "meta_page_id": ((tenant.get("settings") or {}).get("meta") or {}).get("page_id", ""),
         "google_ads": conversions.google_cfg(tenant),
         "meta_cfg": conversions.meta_cfg(tenant),

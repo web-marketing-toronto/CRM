@@ -135,12 +135,20 @@ def create_from_intake(
         raise LeadError("a lead needs at least a name, a phone number or an email address")
 
     area_status, lat, lng, precise = evaluate_area(tenant, fields, maps_api_key=maps_api_key)
+    # A lead that arrived without its ad details (emailed notification, Wix form, call) may have a beacon
+    # from wmt.js for the same person; take the attribution from there.
+    from app.services import beacons
+
+    beacon = None if beacons.has_click(fields) else beacons.claim(conn, tenant_id, email, phone_e164, now=now)
+    if beacon is not None:
+        beacons.apply(fields, beacon)
     attribution = dict(fields.attribution)
     source_detail = {
         "channel": fields.channel.value,
         "platform": fields.platform.value,
         "form_name": fields.form_name,
         "campaign": fields.campaign_name,
+        **({"beacon": True} if beacon is not None else {}),
     }
 
     existing = find_duplicate(conn, tenant_id, phone_e164, email)
@@ -157,6 +165,8 @@ def create_from_intake(
             )
             reopened = True
         _insert_source(conn, tenant_id, lead_id, fields, attribution, raw_payload, ip, user_agent)
+        if beacon is not None:
+            beacons.attach(conn, beacon["id"], lead_id)
         # Enrich blanks on the existing record without overwriting what the client typed.
         conn.execute(
             """
@@ -217,6 +227,8 @@ def create_from_intake(
     ).fetchone()
     lead_id = row["id"]
     _insert_source(conn, tenant_id, lead_id, fields, attribution, raw_payload, ip, user_agent)
+    if beacon is not None:
+        beacons.attach(conn, beacon["id"], lead_id)
     log_activity(conn, tenant_id, lead_id, ActivityType.CREATED, body=fields.message, detail=source_detail, occurred_at=now)
     if assignee:
         log_activity(conn, tenant_id, lead_id, ActivityType.ASSIGNMENT, detail={"to": str(assignee), "how": "default"}, occurred_at=now)

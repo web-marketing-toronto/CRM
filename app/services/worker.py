@@ -14,7 +14,7 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from app.db import system_db
-from app.services import conversions, followup
+from app.services import conversions, email_intake, followup
 
 log = logging.getLogger("crm.worker")
 
@@ -33,9 +33,35 @@ def run_tick(now: datetime | None = None) -> dict:
             nightly = conversions.run_nightly(conn, now=now)
     except Exception:  # noqa: BLE001 - spend is best effort; the next tick after 04:00 tomorrow tries again
         log.exception("nightly spend job failed")
-    result = {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests, "conversions": conv, "spend": nightly}
+    mail = None
+    if email_intake.enabled():
+        try:
+            polled = email_intake.poll(now=now)
+            mail = polled.as_dict()
+            _job_mark("email_intake", now, mail)
+            for lid in polled.lead_ids:
+                dispatch_lead_now(lid)
+        except Exception as exc:  # noqa: BLE001 - the mailbox being down must not stop reminders
+            log.exception("email intake failed")
+            mail = {"error": str(exc)[:300]}
+            _job_mark("email_intake", now, mail)
+    result = {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests, "conversions": conv, "spend": nightly, "email_intake": mail}
     heartbeat(now, result)
     return result
+
+
+def _job_mark(name: str, now: datetime, detail: dict) -> None:
+    try:
+        with system_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_run (name, ran_on, started_at, finished_at, detail) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (name, ran_on) DO UPDATE SET finished_at = EXCLUDED.finished_at, detail = EXCLUDED.detail
+                """,
+                (name, now.date(), now, now, Jsonb(detail)),
+            )
+    except Exception:  # noqa: BLE001
+        log.exception("job mark failed")
 
 
 def heartbeat(now: datetime, result: dict) -> None:

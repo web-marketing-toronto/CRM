@@ -101,6 +101,13 @@
             {% if pipes.email_last_sent %}<br>last sent {{ pipes.email_last_sent | relative }}{% endif %}
             {% if pipes.email_failed_24h %}<br><strong>{{ pipes.email_failed_24h }} failed in 24 h</strong>{% endif %}</dd>
         </div>
+        <div class="pipe {{ ('bad' if pipes.mail_error or pipes.mail_late else 'good') if pipes.mail_enabled else 'off' }}">
+          <dt>Leads by email</dt>
+          <dd>{% if not pipes.mail_enabled %}off · set IMAP_HOST at deploy to read the {{ pipes.email_from }} mailbox{% else %}reading {{ pipes.mail_user }}
+            {% if pipes.mail_at %}· last checked {{ pipes.mail_at | relative }}{% if pipes.mail_late %} · <strong>late</strong>{% endif %}{% else %}· <strong>never checked</strong>{% endif %}
+            {% if pipes.mail_error %}<br><strong>{{ pipes.mail_error }}</strong>{% endif %}
+            <br>{{ pipes.mail_leads_24h }} lead email{{ '' if pipes.mail_leads_24h == 1 else 's' }} in 24 h{% if pipes.mail_rejected_24h %} · <strong>{{ pipes.mail_rejected_24h }} unreadable</strong>{% endif %}{% endif %}</dd>
+        </div>
         <div class="pipe {{ 'bad' if pipes.conv_failed else ('good' if pipes.ads_live else 'off') }}">
           <dt>Ad platforms</dt>
           <dd>{% if not pipes.ads_live %}provider <code>{{ pipes.ads_provider }}</code> · nothing is really sent{% else %}Google: {% if pipes.google_creds %}credentials loaded ({{ pipes.google_creds }}){% else %}<strong>no credentials</strong> (crm-google-ads-yaml not deployed){% endif %} · Meta: {% if pipes.meta_configured %}app token loaded{% else %}not configured{% endif %}{% endif %}
