@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     ads_provider: str = "live"
     google_ads_yaml: str | None = None
     google_ads_sa_key: str | None = None  # service-account JSON key, when the yaml uses json_key_file_path
+    google_ads_api_version: str | None = None  # e.g. v25; Google retires each version ~1 year after release
     google_ads_developer_token: str | None = None
     google_ads_client_id: str | None = None
     google_ads_client_secret: str | None = None

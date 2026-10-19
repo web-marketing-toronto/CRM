@@ -249,6 +249,11 @@ Four layers, each provable on its own. Stop at the first one that fails.
    match rate after a few hours; the Conversions column in reports fills in over 1–3 days, and only for
    clicks that actually came from an ad.
 
+**"Google Ads API vNN has been retired"** from the check: Google keeps each API version about a year
+(v25 until roughly August 2027). Redeploy with the next one and nothing else changes:
+`GOOGLE_ADS_API_VERSION=v26 EMAIL_FROM=… bash deploy/deploy.sh` (or bump
+`DEFAULT_GOOGLE_ADS_API_VERSION` in `app/services/adplatforms.py`).
+
 **Attribution (the other direction)** is checked on the site: open the client's page as
 `https://their-site.com/?gclid=TEST123`, submit the form, and the lead shows a Google Ads chip with
 *Google click: yes* under its source. If it shows Unknown, `wmt.js` isn't on the page or the form posts

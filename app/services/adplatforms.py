@@ -26,7 +26,16 @@ from app.config import get_settings
 
 log = logging.getLogger("crm.adplatforms")
 
-GOOGLE_API = "https://googleads.googleapis.com/v19"
+# Google retires each API version about a year after release and answers a retired one with an HTML 404.
+# The version is a setting (GOOGLE_ADS_API_VERSION) so a bump is a deploy, not a code change.
+DEFAULT_GOOGLE_ADS_API_VERSION = "v25"
+
+
+def google_api() -> str:
+    v = (get_settings().google_ads_api_version or DEFAULT_GOOGLE_ADS_API_VERSION).strip().lower()
+    if not v.startswith("v"):
+        v = "v" + v
+    return f"https://googleads.googleapis.com/{v}"
 GRAPH = "https://graph.facebook.com/v21.0"
 
 
@@ -229,11 +238,11 @@ def google_upload_conversion(customer_id: str, conversion: dict[str, Any]) -> di
     if creds is None:
         raise AdsError("Google Ads credentials are not configured", retryable=False)
     try:
-        r = httpx.post(f"{GOOGLE_API}/customers/{customer_id}:uploadClickConversions", json={"conversions": [conversion], "partialFailure": True}, headers=_google_headers(creds), timeout=30)
+        r = httpx.post(f"{google_api()}/customers/{customer_id}:uploadClickConversions", json={"conversions": [conversion], "partialFailure": True}, headers=_google_headers(creds), timeout=30)
     except httpx.HTTPError as exc:
         raise AdsError(f"Google Ads unreachable: {exc}") from exc
     if r.status_code >= 300:
-        raise AdsError(f"Google Ads {r.status_code}: {r.text[:300]}", retryable=r.status_code in (429, 500, 502, 503, 504))
+        raise AdsError(_google_error(r), retryable=r.status_code in (429, 500, 502, 503, 504))
     data = r.json()
     pf = data.get("partialFailureError")
     if pf:
@@ -262,11 +271,11 @@ def google_campaign_spend(customer_id: str, since: date, until: date) -> list[di
         WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}' AND campaign.status != 'REMOVED'
     """
     try:
-        r = httpx.post(f"{GOOGLE_API}/customers/{customer_id}/googleAds:searchStream", json={"query": query}, headers=_google_headers(creds), timeout=60)
+        r = httpx.post(f"{google_api()}/customers/{customer_id}/googleAds:searchStream", json={"query": query}, headers=_google_headers(creds), timeout=60)
     except httpx.HTTPError as exc:
         raise AdsError(f"Google Ads unreachable: {exc}") from exc
     if r.status_code >= 300:
-        raise AdsError(f"Google Ads {r.status_code}: {r.text[:300]}", retryable=r.status_code >= 500)
+        raise AdsError(_google_error(r), retryable=r.status_code >= 500)
     rows: list[dict[str, Any]] = []
     for chunk in r.json():
         for row in chunk.get("results", []):
@@ -282,6 +291,9 @@ def _google_error(r: httpx.Response) -> str:
     try:
         err = r.json().get("error", {})
     except ValueError:
+        if r.status_code == 404 and "<html" in r.text[:200].lower():
+            v = google_api().rsplit("/", 1)[-1]
+            return f"Google Ads API {v} has been retired (Google keeps each version about a year). Set GOOGLE_ADS_API_VERSION to a current version in deploy/deploy.sh and redeploy."
         return f"Google Ads {r.status_code}: {r.text[:200]}"
     codes: list[str] = []
     messages: list[str] = []
@@ -328,7 +340,7 @@ def google_check(customer_id: str) -> dict[str, Any]:
 
     def query(gaql: str, timeout: int = 30) -> list[dict[str, Any]]:
         try:
-            r = httpx.post(f"{GOOGLE_API}/customers/{customer_id}/googleAds:searchStream", json={"query": gaql}, headers=headers, timeout=timeout)
+            r = httpx.post(f"{google_api()}/customers/{customer_id}/googleAds:searchStream", json={"query": gaql}, headers=headers, timeout=timeout)
         except httpx.HTTPError as exc:
             raise AdsError(f"Google Ads unreachable: {exc}") from exc
         if r.status_code >= 300:

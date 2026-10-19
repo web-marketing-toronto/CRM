@@ -354,3 +354,16 @@ def test_google_error_translation():
     r = httpx.Response(400, json={"error": {"code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT", "details": [{"errors": [{"errorCode": {"queryError": "BAD_FIELD_NAME"}, "message": "Unrecognized field"}]}]}})
     assert adplatforms._google_error(r) == "BAD_FIELD_NAME: Unrecognized field"
     assert adplatforms._google_error(httpx.Response(502, text="<html>bad gateway")).startswith("Google Ads 502")
+    # A retired API version answers with Google's generic HTML 404.
+    msg = adplatforms._google_error(httpx.Response(404, text="<!DOCTYPE html><html lang=en><title>Error 404 (Not Found)!!1</title>"))
+    assert "v25 has been retired" in msg and "GOOGLE_ADS_API_VERSION" in msg
+
+
+def test_google_api_version_is_a_setting(monkeypatch):
+    from app import config
+
+    assert adplatforms.google_api() == "https://googleads.googleapis.com/v25"
+    monkeypatch.setattr(config.get_settings(), "google_ads_api_version", "26")
+    assert adplatforms.google_api() == "https://googleads.googleapis.com/v26"
+    monkeypatch.setattr(config.get_settings(), "google_ads_api_version", "V27")
+    assert adplatforms.google_api() == "https://googleads.googleapis.com/v27"

@@ -65,6 +65,9 @@ done
 if gcloud secrets describe crm-google-ads-yaml >/dev/null 2>&1; then
   SECRET_FLAGS="${SECRET_FLAGS},/secrets/google-ads/google-ads.yaml=crm-google-ads-yaml:latest"
   EXTRA_ENV="${EXTRA_ENV},GOOGLE_ADS_YAML=/secrets/google-ads/google-ads.yaml"
+  # Google retires each Ads API version about a year after release; override the app's default here when
+  # the connection check says the version is retired: GOOGLE_ADS_API_VERSION=v26 bash deploy/deploy.sh
+  [[ -n "${GOOGLE_ADS_API_VERSION:-}" ]] && EXTRA_ENV="${EXTRA_ENV},GOOGLE_ADS_API_VERSION=${GOOGLE_ADS_API_VERSION}"
   gcloud secrets add-iam-policy-binding crm-google-ads-yaml --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
   # A yaml that authenticates as a service account (json_key_file_path) needs the key file too.
   if gcloud secrets describe crm-google-ads-sa-key >/dev/null 2>&1; then
