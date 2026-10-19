@@ -9,8 +9,11 @@ MCC as login-customer-id. Meta goes through the Graph API with the system-user t
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -73,11 +76,30 @@ def normalize_email_for_hash(email: str | None) -> str | None:
 
 @dataclass
 class GoogleCreds:
+    """Either an OAuth refresh token (client_id/client_secret/refresh_token) or a service account
+    (sa_key: the parsed JSON key, optionally impersonating a Workspace user). The yaml decides which."""
+
     developer_token: str
-    client_id: str
-    client_secret: str
-    refresh_token: str
+    client_id: str = ""
+    client_secret: str = ""
+    refresh_token: str = ""
     login_customer_id: str | None = None
+    sa_key: dict[str, Any] | None = None
+    impersonate: str | None = None
+
+    @property
+    def kind(self) -> str:
+        return "service account" if self.sa_key else "refresh token"
+
+    @property
+    def identity(self) -> str:
+        if self.sa_key:
+            return self.impersonate or str(self.sa_key.get("client_email", "service account"))
+        return "OAuth refresh token"
+
+    @property
+    def cache_key(self) -> str:
+        return (self.sa_key or {}).get("private_key_id", "") + (self.impersonate or "") + self.refresh_token
 
 
 def _yaml_value(text: str, key: str) -> str | None:
@@ -88,11 +110,25 @@ def _yaml_value(text: str, key: str) -> str | None:
 
 
 def google_creds_source() -> str | None:
-    """Where credentials come from, for the dashboard: 'google-ads.yaml', 'env', or None."""
+    """Where credentials come from, for the dashboard: 'google-ads.yaml (service account)', 'env', or None."""
     s = get_settings()
-    if google_creds() is None:
+    creds = google_creds()
+    if creds is None:
         return None
-    return "google-ads.yaml" if s.google_ads_yaml else "env"
+    return f"google-ads.yaml, {creds.kind}" if s.google_ads_yaml else "env"
+
+
+def _find_key_file(declared: str | None, yaml_path: str) -> str | None:
+    """The yaml's json_key_file_path is the Campaign Manager's path on its VM. Here the key is mounted from
+    Secret Manager, so try: GOOGLE_ADS_SA_KEY, the path as written, then the same file name next to the yaml."""
+    s = get_settings()
+    candidates = [s.google_ads_sa_key, declared]
+    if declared:
+        candidates.append(os.path.join(os.path.dirname(yaml_path), os.path.basename(declared)))
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
 
 
 def google_creds() -> GoogleCreds | None:
@@ -103,9 +139,25 @@ def google_creds() -> GoogleCreds | None:
         except OSError as exc:
             log.error("google-ads.yaml not readable: %s", exc)
             return None
-        dev, cid, sec, ref = (_yaml_value(text, k) for k in ("developer_token", "client_id", "client_secret", "refresh_token"))
-        if dev and cid and sec and ref:
-            return GoogleCreds(dev, cid, sec, ref, (_yaml_value(text, "login_customer_id") or "").replace("-", "") or None)
+        dev = _yaml_value(text, "developer_token")
+        mcc = (_yaml_value(text, "login_customer_id") or "").replace("-", "") or None
+        if not dev:
+            return None
+        key_path = _find_key_file(_yaml_value(text, "json_key_file_path"), s.google_ads_yaml)
+        if key_path:
+            try:
+                key = json.load(open(key_path, encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                log.error("service account key not readable: %s", exc)
+                return None
+            if key.get("client_email") and key.get("private_key"):
+                return GoogleCreds(dev, login_customer_id=mcc, sa_key=key, impersonate=_yaml_value(text, "impersonated_email"))
+            return None
+        cid, sec, ref = (_yaml_value(text, k) for k in ("client_id", "client_secret", "refresh_token"))
+        if cid and sec and ref:
+            return GoogleCreds(dev, cid, sec, ref, mcc)
+        if _yaml_value(text, "json_key_file_path"):
+            log.error("google-ads.yaml names a json_key_file_path but no key file is mounted (set GOOGLE_ADS_SA_KEY)")
         return None
     if s.google_ads_developer_token and s.google_ads_client_id and s.google_ads_client_secret and s.google_ads_refresh_token:
         return GoogleCreds(s.google_ads_developer_token, s.google_ads_client_id, s.google_ads_client_secret, s.google_ads_refresh_token, (s.google_ads_login_customer_id or "").replace("-", "") or None)
@@ -113,21 +165,47 @@ def google_creds() -> GoogleCreds | None:
 
 
 _token_cache: dict[str, Any] = {}
+ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def service_account_assertion(key: dict[str, Any], *, scope: str = ADS_SCOPE, subject: str | None = None, now: float | None = None) -> str:
+    """A signed JWT (RS256) that Google's token endpoint swaps for an access token."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    iat = int(now or time.time())
+    header = {"alg": "RS256", "typ": "JWT", "kid": key.get("private_key_id")}
+    claims = {"iss": key["client_email"], "scope": scope, "aud": key.get("token_uri") or "https://oauth2.googleapis.com/token", "iat": iat, "exp": iat + 3600}
+    if subject:
+        claims["sub"] = subject
+    signing_input = _b64url(json.dumps(header, separators=(",", ":")).encode()) + "." + _b64url(json.dumps(claims, separators=(",", ":")).encode())
+    private_key = serialization.load_pem_private_key(key["private_key"].encode(), password=None)
+    signature = private_key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
+    return signing_input + "." + _b64url(signature)
 
 
 def google_access_token(creds: GoogleCreds) -> str:
-    if _token_cache.get("expires", 0) > time.time() + 60 and _token_cache.get("refresh") == creds.refresh_token:
+    if _token_cache.get("expires", 0) > time.time() + 60 and _token_cache.get("who") == creds.cache_key:
         return _token_cache["token"]
-    r = httpx.post(
-        "https://oauth2.googleapis.com/token",
-        data={"client_id": creds.client_id, "client_secret": creds.client_secret, "refresh_token": creds.refresh_token, "grant_type": "refresh_token"},
-        timeout=20,
-    )
+    if creds.sa_key:
+        data = {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": service_account_assertion(creds.sa_key, subject=creds.impersonate)}
+        token_url = creds.sa_key.get("token_uri") or "https://oauth2.googleapis.com/token"
+    else:
+        data = {"client_id": creds.client_id, "client_secret": creds.client_secret, "refresh_token": creds.refresh_token, "grant_type": "refresh_token"}
+        token_url = "https://oauth2.googleapis.com/token"
+    try:
+        r = httpx.post(token_url, data=data, timeout=20)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Google sign-in unreachable: {exc}") from exc
     if r.status_code >= 300:
-        raise AdsError(f"Google OAuth refresh failed: {r.status_code} {r.text[:200]}", retryable=r.status_code >= 500)
-    data = r.json()
-    _token_cache.update({"token": data["access_token"], "expires": time.time() + int(data.get("expires_in", 3600)), "refresh": creds.refresh_token})
-    return data["access_token"]
+        raise AdsError(f"Google sign-in failed ({creds.kind}): {r.status_code} {r.text[:200]}", retryable=r.status_code >= 500)
+    payload = r.json()
+    _token_cache.update({"token": payload["access_token"], "expires": time.time() + int(payload.get("expires_in", 3600)), "who": creds.cache_key})
+    return payload["access_token"]
 
 
 def _google_headers(creds: GoogleCreds) -> dict[str, str]:
@@ -273,7 +351,7 @@ def google_check(customer_id: str) -> dict[str, Any]:
     ]
     spend = query("SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_7_DAYS")
     spend_7d = sum(int(r.get("metrics", {}).get("costMicros", 0)) for r in spend) / 1_000_000
-    return {"creds": google_creds_source(), "login_customer_id": creds.login_customer_id, "account": account, "actions": actions, "spend_7d": spend_7d}
+    return {"creds": google_creds_source(), "identity": creds.identity, "login_customer_id": creds.login_customer_id, "account": account, "actions": actions, "spend_7d": spend_7d}
 
 
 # --- Meta ----------------------------------------------------------------------------------------

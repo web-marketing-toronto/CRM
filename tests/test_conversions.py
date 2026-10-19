@@ -216,6 +216,90 @@ def test_google_yaml_credentials_are_read(tmp_path, monkeypatch):
     assert creds.developer_token == "DEVTOKEN" and creds.client_secret == "sec" and creds.refresh_token == "1//refresh" and creds.login_customer_id == "6474164373"
 
 
+def _service_account_key():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = private.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.PKCS8, encryption_algorithm=serialization.NoEncryption()).decode()
+    key = {"type": "service_account", "project_id": "wmt-campaign-manager", "private_key_id": "kid123", "private_key": pem,
+           "client_email": "ads-bot@wmt-campaign-manager.iam.gserviceaccount.com", "token_uri": "https://oauth2.googleapis.com/token"}
+    return key, private.public_key()
+
+
+def test_service_account_yaml_finds_the_mounted_key_and_signs_a_jwt(tmp_path, monkeypatch):
+    import base64
+    import json
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    from app import config
+
+    key, public = _service_account_key()
+    # The yaml names the Campaign Manager's path on its VM; here the key sits next to the yaml under the same name.
+    y = tmp_path / "google-ads.yaml"
+    y.write_text("developer_token: DEVTOKEN\njson_key_file_path: /home/campaigns/wmt-ads-manager/service_account.json\nlogin_customer_id: 647-416-4373\nuse_proto_plus: True\n")
+    (tmp_path / "service_account.json").write_text(json.dumps(key))
+    monkeypatch.setattr(config.get_settings(), "google_ads_yaml", str(y))
+    monkeypatch.setattr(config.get_settings(), "google_ads_sa_key", None)
+    creds = adplatforms.google_creds()
+    assert creds.kind == "service account" and creds.identity == "ads-bot@wmt-campaign-manager.iam.gserviceaccount.com"
+    assert creds.developer_token == "DEVTOKEN" and creds.login_customer_id == "6474164373" and creds.sa_key["private_key_id"] == "kid123"
+    assert adplatforms.google_creds_source() == "google-ads.yaml, service account"
+
+    # GOOGLE_ADS_SA_KEY wins when set (the Cloud Run mount path); a missing key file means no credentials.
+    other = tmp_path / "elsewhere.json"
+    other.write_text(json.dumps({**key, "private_key_id": "kid999"}))
+    monkeypatch.setattr(config.get_settings(), "google_ads_sa_key", str(other))
+    assert adplatforms.google_creds().sa_key["private_key_id"] == "kid999"
+    monkeypatch.setattr(config.get_settings(), "google_ads_sa_key", str(tmp_path / "nope.json"))
+    (tmp_path / "service_account.json").unlink()
+    assert adplatforms.google_creds() is None and adplatforms.google_creds_source() is None
+
+    # The assertion is a valid RS256 JWT for the Ads scope that Google's token endpoint will accept.
+    jwt = adplatforms.service_account_assertion(key, now=1_800_000_000)
+    head, body, sig = jwt.split(".")
+    pad = lambda t: t + "=" * (-len(t) % 4)  # noqa: E731
+    assert json.loads(base64.urlsafe_b64decode(pad(head))) == {"alg": "RS256", "typ": "JWT", "kid": "kid123"}
+    claims = json.loads(base64.urlsafe_b64decode(pad(body)))
+    assert claims == {"iss": key["client_email"], "scope": "https://www.googleapis.com/auth/adwords", "aud": "https://oauth2.googleapis.com/token", "iat": 1_800_000_000, "exp": 1_800_003_600}
+    public.verify(base64.urlsafe_b64decode(pad(sig)), f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
+
+
+def test_service_account_token_exchange_uses_the_jwt_grant(monkeypatch):
+    import httpx
+
+    key, _ = _service_account_key()
+    creds = adplatforms.GoogleCreds("DEVTOKEN", login_customer_id="6474164373", sa_key=key)
+    seen = {}
+
+    def fake_post(url, data=None, timeout=None, **kw):
+        seen["url"], seen["data"] = url, data
+        return httpx.Response(200, json={"access_token": "ya29.test", "expires_in": 3599, "token_type": "Bearer"})
+
+    monkeypatch.setattr(adplatforms.httpx, "post", fake_post)
+    adplatforms._token_cache.clear()
+    assert adplatforms.google_access_token(creds) == "ya29.test"
+    assert seen["url"] == "https://oauth2.googleapis.com/token" and seen["data"]["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer"
+    assert seen["data"]["assertion"].count(".") == 2
+    headers = adplatforms._google_headers(creds)
+    assert headers["Authorization"] == "Bearer ya29.test" and headers["developer-token"] == "DEVTOKEN" and headers["login-customer-id"] == "6474164373"
+    # Cached until it nears expiry.
+    seen.clear()
+    assert adplatforms.google_access_token(creds) == "ya29.test" and not seen
+    adplatforms._token_cache.clear()
+
+    def failing_post(url, data=None, timeout=None, **kw):
+        return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid JWT Signature."})
+
+    monkeypatch.setattr(adplatforms.httpx, "post", failing_post)
+    with pytest.raises(adplatforms.AdsError) as exc:
+        adplatforms.google_access_token(creds)
+    assert "service account" in str(exc.value) and "Invalid JWT Signature" in str(exc.value)
+    adplatforms._token_cache.clear()
+
+
 # --- The Google Ads connection check on the client page ---------------------------------------------------
 
 def test_google_ads_check_lists_actions_and_flags_problems(client, make_tenant, make_user, admin_conn):

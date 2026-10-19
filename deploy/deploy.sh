@@ -33,6 +33,7 @@ URL="${BASE_URL:-${EXISTING_URL:-https://placeholder.invalid}}"
 #   crm-meta-verify-token       META_VERIFY_TOKEN
 #   crm-meta-access-token       META_ACCESS_TOKEN
 #   crm-google-ads-yaml         (mounted as a file)         the Campaign Manager's google-ads.yaml, for conversion uploads + spend
+#   crm-google-ads-sa-key       (mounted as a file)         its service_account.json, when the yaml uses json_key_file_path
 OPTIONAL_SECRETS=(
   "crm-google-maps-api-key:GOOGLE_MAPS_API_KEY"
   "crm-twilio-account-sid:TWILIO_ACCOUNT_SID"
@@ -65,6 +66,12 @@ if gcloud secrets describe crm-google-ads-yaml >/dev/null 2>&1; then
   SECRET_FLAGS="${SECRET_FLAGS},/secrets/google-ads/google-ads.yaml=crm-google-ads-yaml:latest"
   EXTRA_ENV="${EXTRA_ENV},GOOGLE_ADS_YAML=/secrets/google-ads/google-ads.yaml"
   gcloud secrets add-iam-policy-binding crm-google-ads-yaml --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
+  # A yaml that authenticates as a service account (json_key_file_path) needs the key file too.
+  if gcloud secrets describe crm-google-ads-sa-key >/dev/null 2>&1; then
+    SECRET_FLAGS="${SECRET_FLAGS},/secrets/google-ads-key/service_account.json=crm-google-ads-sa-key:latest"
+    EXTRA_ENV="${EXTRA_ENV},GOOGLE_ADS_SA_KEY=/secrets/google-ads-key/service_account.json"
+    gcloud secrets add-iam-policy-binding crm-google-ads-sa-key --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
+  fi
 fi
 EMAIL_FROM="${EMAIL_FROM:-leads@web-marketing-toronto.com}"
 EMAIL_FROM_NAME="${EMAIL_FROM_NAME:-WMT CRM}"

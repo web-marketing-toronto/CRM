@@ -234,7 +234,7 @@
         {% if not google_check.ok %}
         <strong>Not connected.</strong> {{ google_check.error }}
         {% else %}
-        <div><strong>Connected.</strong> Signed in through MCC {{ google_check.login_customer_id or '—' }} ({{ google_check.creds }}) → <strong>{{ google_check.account.name or 'unnamed account' }}</strong> {{ google_check.account.id }}{% if google_check.account.currency %} · {{ google_check.account.currency }}{% endif %}{% if google_check.account.time_zone %} · {{ google_check.account.time_zone }}{% endif %} · spent {{ google_check.spend_7d | money }} in the last 7 days.</div>
+        <div><strong>Connected.</strong> Signed in as {{ google_check.identity or google_check.creds }} through MCC {{ google_check.login_customer_id or '—' }} → <strong>{{ google_check.account.name or 'unnamed account' }}</strong> {{ google_check.account.id }}{% if google_check.account.currency %} · {{ google_check.account.currency }}{% endif %}{% if google_check.account.time_zone %} · {{ google_check.account.time_zone }}{% endif %} · spent {{ google_check.spend_7d | money }} in the last 7 days.</div>
         {% for p in google_check.problems %}<div class="gcheck-problem">{{ p }}</div>{% endfor %}
         {% if google_check.actions %}
         <table class="data" style="margin-top:10px;background:var(--card)">

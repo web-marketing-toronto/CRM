@@ -199,9 +199,17 @@ works (set `channel` to `meta_lead_ad`).
 
 ### Google Ads (conversion uploads and spend)
 
-1. The Campaign Manager's `google-ads.yaml` (developer token, OAuth client id/secret, refresh token,
-   `login_customer_id` = the MCC) is all the CRM needs; store it as `crm-google-ads-yaml`. The service
-   account the token belongs to must have access to each client account through the MCC.
+1. The Campaign Manager's `google-ads.yaml` is all the CRM needs, stored as `crm-google-ads-yaml`. It comes
+   in two flavours and both work: OAuth (`client_id`, `client_secret`, `refresh_token`) or service account
+   (`json_key_file_path` pointing at the key JSON). For the service-account kind, store the key file too,
+   as `crm-google-ads-sa-key`; the deploy mounts it and the CRM ignores the VM path written in the yaml.
+   Either way `login_customer_id` is the MCC, and the identity (the OAuth user, or the service account's
+   email) must be a user on that MCC. From the Campaign Manager VM:
+
+   ```bash
+   gcloud secrets create crm-google-ads-yaml --data-file=/home/campaigns/wmt-ads-manager/google-ads.yaml --replication-policy=user-managed --locations=northamerica-northeast2
+   gcloud secrets create crm-google-ads-sa-key --data-file=/home/campaigns/wmt-ads-manager/service_account.json --replication-policy=user-managed --locations=northamerica-northeast2
+   ```
 2. Per client, in their Google Ads account: Goals → Conversions → New → Import → CRM, files or other data
    sources → Track conversions from clicks. Create **CRM Qualified Lead** and **CRM Closed Won**, both
    **secondary** actions, click-through window 90 days, "Enhanced conversions for leads" on. Copy each
@@ -219,8 +227,9 @@ move to value-based bidding, record the date on the client's settings page so re
 Four layers, each provable on its own. Stop at the first one that fails.
 
 1. **Credentials reach the server.** Dashboard → *Pipes* → *Ad platforms* says "Google: credentials loaded
-   (google-ads.yaml)". If it says no credentials, the `crm-google-ads-yaml` secret doesn't exist or the deploy
-   ran before it did: `gcloud secrets create crm-google-ads-yaml --data-file=google-ads.yaml …` then redeploy.
+   (google-ads.yaml, service account)". If it says no credentials, the secrets above don't exist or the deploy
+   ran before they did (the deploy's `Wired:` line lists what was mounted); for the service-account kind
+   both secrets are needed.
 2. **The MCC can see the client's account.** Client settings → *Conversion uploads* → type the customer id →
    **Check Google Ads connection**. It signs in with the refresh token, reads the account name, currency and
    last-7-day spend, and lists every import-from-clicks conversion action with its id and status. Errors come
