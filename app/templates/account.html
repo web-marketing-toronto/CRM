@@ -13,6 +13,14 @@
   <label class="check"><input type="checkbox" name="notify_email" {{ 'checked' if principal.user.notify_email else '' }}> Email me too ({{ principal.user.email }})</label>
   <button class="btn" type="submit" style="margin-top:8px">Save alerts</button>
 </form>
+<div class="panel" style="margin-top:10px">
+  <h3 style="margin-bottom:4px">Check that alerts reach you</h3>
+  <p class="muted" style="font-size:14px">Sends a real message to the number and address saved above.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <form class="inline-form" method="post" action="/account/test-text"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit" {{ 'disabled' if not principal.user.mobile_e164 else '' }}>Send me a test text</button></form>
+    <form class="inline-form" method="post" action="/account/test-email"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Send me a test email</button></form>
+  </div>
+</div>
 
 <div class="section"><h2>Password</h2></div>
 <form class="panel" method="post" action="/account/password">

@@ -14,7 +14,20 @@ from app import web
 from app.auth.deps import LoginRequired, redirect_for
 from app.config import get_settings
 from app.db import close_pool, init_pool
-from app.routers import account, act, admin, auth, cron, health, intake, leads, reports, sources, twilio
+from app.routers import (
+    account,
+    act,
+    admin,
+    auth,
+    cron,
+    dashboard,
+    health,
+    intake,
+    leads,
+    reports,
+    sources,
+    twilio,
+)
 
 log = logging.getLogger("crm")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -40,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router)
     app.include_router(leads.router)
     app.include_router(admin.router)
+    app.include_router(dashboard.router)
     app.include_router(reports.router)
     app.include_router(cron.router)
     app.include_router(twilio.router)
@@ -55,10 +69,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def _http_error(request: Request, exc: HTTPException):
-        if request.url.path.startswith(("/v1/", "/internal/", "/health")) or request.headers.get("hx-request"):
+        if request.url.path.startswith(("/v1/", "/internal/", "/health")) or request.headers.get(
+            "hx-request"
+        ):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         if exc.status_code == 409 and exc.detail == "Pick a client first":
-            return RedirectResponse("/admin", status_code=303)
+            return RedirectResponse("/dashboard", status_code=303)
         return web.error_page(request, exc.status_code, str(exc.detail))
 
     @app.middleware("http")

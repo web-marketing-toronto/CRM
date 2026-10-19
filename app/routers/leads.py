@@ -39,8 +39,9 @@ NEEDS_ACTION_SQL = """
 
 @router.get("/")
 def home(principal: Annotated[Principal, Depends(require_user)]):
-    if principal.is_agency and principal.tenant is None:
-        return RedirectResponse("/admin", status_code=303)
+    """Agency staff land on the cross-client dashboard; client users on their lead list."""
+    if principal.is_agency:
+        return RedirectResponse("/dashboard", status_code=303)
     return RedirectResponse("/leads", status_code=303)
 
 

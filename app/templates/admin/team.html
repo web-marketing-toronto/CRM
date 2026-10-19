@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Team{% endblock %}
+{% block content %}
+<div class="section" style="margin-top:0">
+  <h1>Team</h1>
+  <span class="dim">{{ active_count }} active login{{ '' if active_count == 1 else 's' }}</span>
+</div>
+<p class="muted" style="margin-bottom:16px">Agency staff. Everyone here sees every client, can change settings, create client logins and work leads. Escalations and the morning agency digest go to whoever has alerts turned on under their own Account page.</p>
+
+{% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+{% if new_user_password %}
+<div class="warn">Temporary password: <code style="font-size:18px;letter-spacing:0.06em;user-select:all">{{ new_user_password }}</code>. They sign in at <strong>{{ settings.base_url }}</strong>, choose their own password, then set up an authenticator app (required for agency logins).</div>
+{% endif %}
+
+<div class="panel">
+  {% for u in members %}
+  <div class="user-row">
+    <div class="who">
+      <strong>{{ u.name }}{% if u.id == principal.user_id %} <span class="dim" style="font-weight:500">you</span>{% endif %}{% if not u.is_active %} <span class="pill s-lost">disabled</span>{% endif %}</strong>
+      <span>{{ u.email }}{% if u.mobile_e164 %} · {{ u.mobile_e164 | phone }}{% else %} · no mobile{% endif %}
+        · {% if u.totp_enabled %}authenticator on{% else %}<span style="color:var(--alert)">no authenticator yet</span>{% endif %}
+        · alerts: {% if u.notify_sms and u.mobile_e164 %}text{% endif %}{% if u.notify_sms and u.mobile_e164 and u.notify_email %} + {% endif %}{% if u.notify_email %}email{% endif %}{% if not u.notify_email and not (u.notify_sms and u.mobile_e164) %}off{% endif %}
+        · {% if u.id in active_sessions %}signed in, active {{ active_sessions[u.id] | relative }}{% elif u.last_login_at %}last sign-in {{ u.last_login_at | relative }}{% else %}never signed in{% endif %}
+        {% if u.must_set_password %} · <span style="color:var(--alert)">temporary password outstanding</span>{% endif %}</span>
+    </div>
+    <div class="ops">
+      <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-password" onsubmit="return confirm('Set a temporary password for {{ u.name }}? Their current sessions end.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Reset password</button></form>
+      {% if u.totp_enabled %}<form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-mfa" onsubmit="return confirm('Clear the authenticator for {{ u.name }}? They set up a new one at next sign-in.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Clear authenticator</button></form>{% endif %}
+      {% if u.id != principal.user_id %}
+      <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/toggle-active" {% if u.is_active %}onsubmit="return confirm('Disable {{ u.name }}? They are signed out everywhere and can\'t sign back in until re-enabled.')"{% endif %}><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small {{ 'danger' if u.is_active else '' }}" type="submit">{{ 'Disable' if u.is_active else 'Enable' }}</button></form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <form method="post" action="/admin/team" style="margin-top:16px;border-top:1px solid var(--line);padding-top:16px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3 style="margin-bottom:4px">Add a team member</h3>
+    <p class="help" style="font-size:13px;color:var(--ink-2);margin-bottom:12px">They get the same access as you. For someone who only works one client's leads, add them as that client's login instead (Clients → the client → Logins).</p>
+    <div class="grid-2">
+      <div class="field"><label for="t_name">Name</label><input id="t_name" name="name" type="text" required autocomplete="off"></div>
+      <div class="field"><label for="t_email">Email</label><input id="t_email" name="email" type="email" required autocomplete="off"></div>
+      <div class="field"><label for="t_mobile">Mobile (for escalation texts; optional)</label><input id="t_mobile" name="mobile" type="tel" inputmode="tel" placeholder="705 555 0123"></div>
+    </div>
+    <button class="btn" type="submit">Create login</button>
+  </form>
+</div>
+
+<div class="section"><h2>Disabling instead of deleting</h2></div>
+<div class="panel">
+  <p class="muted" style="margin:0">Logins are disabled, not deleted, so the audit trail keeps showing who did what. A disabled login is signed out immediately and stays locked out until it is enabled again. You can't disable your own login or the last active one.</p>
+</div>
+{% endblock %}

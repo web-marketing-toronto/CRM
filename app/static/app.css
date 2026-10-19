@@ -331,3 +331,30 @@ table.data tr.rowlink:hover td { background: var(--signal-soft); }
 .info .tip code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; background: rgba(255, 255, 255, 0.12); color: #ffe566; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
 .info .tip strong { color: #fff; }
 .info:hover .tip, .info:focus .tip, .info:focus-within .tip { display: block; }
+
+/* ---------- Agency dashboard ---------- */
+.stats.attention a.stat { color: var(--ink); display: block; border-left: 5px solid var(--line-strong); }
+.stats.attention a.stat:hover { text-decoration: none; border-color: var(--ink-3); border-left-color: var(--ink); }
+.stats.attention a.stat.ok { border-left-color: var(--won); }
+.stats.attention a.stat.ok .v { color: var(--won); }
+.stat.warn .v { color: #9a6b00; }
+.stats.attention a.stat.warn { border-left-color: var(--hivis-deep); }
+.stats.attention a.stat.alert { border-left-color: var(--alert); }
+.dash-grid { display: grid; grid-template-columns: 1fr; gap: 0 20px; }
+@media (min-width: 980px) { .dash-grid { grid-template-columns: 3fr 2fr; } }
+.panel.quiet { color: var(--ink-2); }
+.panel.quiet strong { color: var(--won); }
+.pipe-list { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.pipe { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 8px 0 8px 12px; border-left: 4px solid var(--line-strong); font-size: 14px; }
+.pipe.good { border-left-color: var(--won); }
+.pipe.bad { border-left-color: var(--alert); }
+.pipe.off { border-left-color: var(--line-strong); color: var(--ink-2); }
+.pipe dt { font-weight: 700; }
+.pipe dd { margin: 0; color: var(--ink-2); word-break: break-word; }
+.pipe dd strong { color: var(--alert); }
+.pipe code { font-size: 13px; background: var(--paper); padding: 1px 5px; border-radius: 3px; }
+.problems { display: flex; flex-direction: column; gap: 10px; }
+.problem { font-size: 14px; padding: 8px 0 8px 12px; border-left: 4px solid var(--alert); }
+.problem .err { color: var(--alert); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; margin: 2px 0 4px; word-break: break-word; }
+.chip.gap { border-color: var(--hivis-deep); background: #fff8d6; color: #6b5300; font-weight: 600; margin: 1px 0; }
+.chip.gap:hover { text-decoration: none; border-color: var(--ink); }

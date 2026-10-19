@@ -161,7 +161,7 @@ def test_agency_admin_switches_tenants_and_sees_dashboard(client, make_tenant, m
     page = client.get("/login/mfa")
     csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
     client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
-    assert client.get("/", follow_redirects=False).headers["location"] == "/admin"
+    assert client.get("/", follow_redirects=False).headers["location"] == "/dashboard"
     dash = client.get("/admin")
     assert dash.status_code == 200 and "Alpha" in dash.text and "Beta" in dash.text
     csrf = csrf_from(client)

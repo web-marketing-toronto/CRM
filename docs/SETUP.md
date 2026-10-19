@@ -49,6 +49,17 @@ gcloud run jobs delete crm-admin --region=northamerica-northeast2 --quiet
 Then open the service URL, sign in, and the app walks you through setting up an authenticator app
 (required for agency and owner logins). Change that password from **Account** right away.
 
+That is the only login that ever needs the command line. Everyone else on the agency side is added from
+**Team** in the app: name, email, optional mobile. They get a one-time temporary password, choose their own
+at first sign-in, then set up an authenticator (mandatory for agency logins). Team members have the same
+access as you: every client, every setting, every lead. Someone who should only see one client's leads is
+added as that client's login instead (Clients → the client → Logins).
+
+Signing in as agency staff lands on the **Dashboard**: what needs attention across every client (new leads
+nobody has called, leads waiting on a reply, overdue follow-ups), volume, the latest leads, whether the
+pipes are alive (scheduler, texting, email, ad-platform uploads), any text or email that failed in the last
+day, and a client table with each client's missing setup steps.
+
 ## 4. Add the first client
 
 In **Clients → Add client**: name, short name (goes in their intake URL) and job types. On the client's
@@ -238,6 +249,13 @@ so intake URLs and emails use the real domain.
   step 3 with `--args="-m,app.cli,set-password,--email,who@example.com,--password,NEW-PASSWORD"`; add
   `,--clear-mfa` to also remove their authenticator.
 - **A client user lost their phone**: client page → *Clear authenticator*. They enrol a new one at next login.
+  Same for a team member, from **Team**.
+- **Someone leaves the agency**: Team → *Disable*. They are signed out everywhere at once and the audit trail
+  keeps their name. You can't disable your own login or the last active one.
+- **"Are my alerts actually reaching me?"**: Account → *Send me a test text* / *Send me a test email*. The text
+  comes from the agency number; replying `?` to it proves the inbound side too.
+- **Is the scheduler running?**: the Dashboard's *Pipes* panel shows when the minute tick last ran and turns
+  red after 5 minutes without one (then check Cloud Scheduler and the Cloud Run logs).
 - **Rotate a client's intake key** (if a URL leaked): client page → *Generate a new key*, then update their forms
   and the CallRail / Google lead-form webhooks.
 - **A conversion didn't reach Google or Meta**: the lead page (agency view) shows every upload, its status and

@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_class %}wide{% endblock %}
+{% block content %}
+{% set a = attention %}
+<div class="section" style="margin-top:0">
+  <h1>Dashboard <span class="dim" style="font-weight:400;font-size:16px">{{ now | local(tz, '%A, %B %-d · %-I:%M %p') }}</span></h1>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <a class="btn ghost small" href="/admin/team">Team ({{ team_count }})</a>
+    <a class="btn small" href="/admin/tenants/new">Add client</a>
+  </div>
+</div>
+
+{# ---- What needs attention right now ---- #}
+<div class="stats attention">
+  <a class="stat {{ 'alert' if a.stale_new else 'ok' }}" href="#attention"><div class="v">{{ a.stale_new }}</div><div class="k">new leads nobody has called (24 h+)</div></a>
+  <a class="stat {{ 'alert' if a.awaiting_reply else 'ok' }}" href="#attention"><div class="v">{{ a.awaiting_reply }}</div><div class="k">leads waiting on a reply (2 h+)</div></a>
+  <a class="stat {{ 'warn' if a.overdue else 'ok' }}" href="#attention"><div class="v">{{ a.overdue }}</div><div class="k">follow-ups overdue</div></a>
+  <a class="stat {{ 'warn' if a.unassigned_new else 'ok' }}" href="#clients"><div class="v">{{ a.unassigned_new }}</div><div class="k">new leads with nobody assigned</div></a>
+  <a class="stat {{ 'warn' if a.escalations_7d else '' }}" href="#attention"><div class="v">{{ a.escalations_7d }}</div><div class="k">escalations to the agency, 7 d</div></a>
+  <a class="stat {{ 'alert' if a.failed_messages_24h else 'ok' }}" href="#pipes"><div class="v">{{ a.failed_messages_24h }}</div><div class="k">texts or emails that failed, 24 h</div></a>
+</div>
+
+{# ---- Volume ---- #}
+<div class="stats">
+  <div class="stat"><div class="v">{{ volume.today }}</div><div class="k">leads today</div></div>
+  <div class="stat"><div class="v">{{ volume.this_week }}</div><div class="k">this week</div></div>
+  <div class="stat"><div class="v">{{ volume.last_30 }}</div><div class="k">last 30 days · {{ a.open_leads }} open</div></div>
+  <div class="stat"><div class="v">{{ volume.won_30 }}</div><div class="k">won, 30 d · {{ volume.won_value_30 | money }}</div></div>
+  <div class="stat {{ 'warn' if volume.speed_median_min is not none and volume.speed_median_min > 60 else '' }}"><div class="v">{{ volume.speed_median_min | minutes }}</div><div class="k">speed to lead, 30 d median</div></div>
+</div>
+
+{# ---- Needs attention ---- #}
+<div class="section" id="attention"><h2>Needs attention</h2>{% if attention_leads %}<span class="dim">oldest first · opens the lead as that client</span>{% endif %}</div>
+{% if attention_leads %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>Client</th><th>Lead</th><th>Why</th><th>Since</th><th>Assigned to</th><th></th></tr></thead>
+  <tbody>
+  {% for l in attention_leads %}
+    <tr>
+      <td><a href="/admin/tenants/{{ l.tenant_id }}">{{ l.tenant_name }}</a></td>
+      <td><a class="name" href="/admin/tenants/{{ l.tenant_id }}/leads/{{ l.id }}">{{ l.contact_name or 'Unknown' }}</a> <span class="dim">{{ l.ref_code }}</span>{% if l.job_type %}<br><span class="dim" style="font-size:12px">{{ l.job_type }}</span>{% endif %}</td>
+      <td style="white-space:nowrap"><span class="pill {{ 'overdue' if l.why == 'untouched' else ('s-new' if l.why == 'awaiting_reply' else 's-no_response') }}">{{ l.why_label }}</span></td>
+      <td style="white-space:nowrap">{{ l.since | relative }}</td>
+      <td>{{ l.assignee or '—' }}</td>
+      <td style="text-align:right"><a class="btn ghost small" href="/admin/tenants/{{ l.tenant_id }}/leads/{{ l.id }}">Open</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="panel quiet"><strong>Nothing is waiting.</strong> Every new lead has been contacted, every reply answered, no follow-ups overdue.</div>
+{% endif %}
+
+<div class="dash-grid">
+  <div>
+    {# ---- Latest leads ---- #}
+    <div class="section"><h2>Latest leads</h2><a class="dim" href="/admin/reports">All-client report →</a></div>
+    {% if recent %}
+    <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>Received</th><th>Client</th><th>Lead</th><th>Source</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for l in recent %}
+        <tr class="rowlink" onclick="window.location='/admin/tenants/{{ l.tenant_id }}/leads/{{ l.id }}'">
+          <td style="white-space:nowrap">{{ l.created_at | relative }}</td>
+          <td>{{ l.tenant_name }}</td>
+          <td><a class="name" href="/admin/tenants/{{ l.tenant_id }}/leads/{{ l.id }}">{{ l.contact_name or 'Unknown' }}</a> <span class="dim">{{ l.ref_code }}</span></td>
+          <td><span class="chip {{ l.platform }}">{{ l.platform | platform_label }}</span> <span class="dim" style="font-size:12px">{{ l.channel | channel_label }}</span></td>
+          <td><span class="pill s-{{ l.status }}">{{ l.status | status_label }}</span>{% if l.first_contact_at %} <span class="dim" style="font-size:12px">in {{ ((l.first_contact_at - l.created_at).total_seconds() / 60) | minutes }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="panel quiet">No leads yet. Once a client's website form posts to its intake URL, leads show up here.</div>
+    {% endif %}
+  </div>
+
+  <div id="pipes">
+    {# ---- Pipes ---- #}
+    <div class="section"><h2>Pipes</h2></div>
+    <div class="panel">
+      <dl class="pipe-list">
+        <div class="pipe {{ 'bad' if pipes.tick_late else 'good' }}">
+          <dt>Scheduler</dt>
+          <dd>{% if pipes.tick_at %}last ran {{ pipes.tick_at | relative }}{% if pipes.tick_late %} · <strong>late</strong>, reminders are not going out{% endif %}{% else %}<strong>never ran</strong> · check Cloud Scheduler{% endif %}</dd>
+        </div>
+        <div class="pipe {{ 'bad' if pipes.sms_failed_24h else ('good' if pipes.sms_live else 'off') }}">
+          <dt>Texting</dt>
+          <dd>{% if pipes.sms_live %}Twilio · {{ pipes.agency_number | phone }}{% else %}provider <code>{{ pipes.sms_provider }}</code> · nothing is really sent{% endif %}
+            {% if pipes.sms_last_sent %}<br>last sent {{ pipes.sms_last_sent | relative }}{% endif %}{% if pipes.sms_last_received %} · last received {{ pipes.sms_last_received | relative }}{% endif %}
+            {% if pipes.sms_failed_24h %}<br><strong>{{ pipes.sms_failed_24h }} failed in 24 h</strong>{% endif %}</dd>
+        </div>
+        <div class="pipe {{ 'bad' if pipes.email_failed_24h else ('good' if pipes.email_live else 'off') }}">
+          <dt>Email</dt>
+          <dd>{% if pipes.email_live %}{{ pipes.email_provider | upper if pipes.email_provider == 'smtp' else pipes.email_provider | capitalize }} · {{ pipes.email_from }}{% else %}provider <code>{{ pipes.email_provider }}</code> · nothing is really sent{% endif %}
+            {% if pipes.email_last_sent %}<br>last sent {{ pipes.email_last_sent | relative }}{% endif %}
+            {% if pipes.email_failed_24h %}<br><strong>{{ pipes.email_failed_24h }} failed in 24 h</strong>{% endif %}</dd>
+        </div>
+        <div class="pipe {{ 'bad' if pipes.conv_failed else ('good' if pipes.ads_live else 'off') }}">
+          <dt>Ad platforms</dt>
+          <dd>{% if pipes.conv_pending or pipes.conv_failed %}{{ pipes.conv_pending }} conversion{{ '' if pipes.conv_pending == 1 else 's' }} waiting{% if pipes.conv_failed %} · <strong>{{ pipes.conv_failed }} failed</strong>{% endif %}{% else %}no uploads waiting{% endif %}
+            {% if pipes.conv_last_sent %}<br>last upload {{ pipes.conv_last_sent | relative }}{% endif %}
+            {% if pipes.spend_at %}<br>spend pulled {{ pipes.spend_at | relative }}{% endif %}</dd>
+        </div>
+      </dl>
+    </div>
+
+    {% if problems %}
+    <div class="section"><h2>Delivery problems <span class="dim" style="font-weight:400;font-size:14px">last 24 h</span></h2></div>
+    <div class="panel problems">
+      {% for p in problems %}
+      <div class="problem">
+        <div><strong>{{ p.channel | upper }}</strong> {{ p.kind }} → {{ p.to_addr if p.channel == 'email' else p.to_addr | phone }}{% if p.user_name %} ({{ p.user_name }}){% endif %}{% if p.tenant_name %} · {{ p.tenant_name }}{% endif %} · <span class="dim">{{ p.created_at | relative }}</span></div>
+        <div class="err">{{ p.error or 'no error text from the provider' }}</div>
+        {% if p.lead_id and p.tenant_id %}<a href="/admin/tenants/{{ p.tenant_id }}/leads/{{ p.lead_id }}">Open lead</a>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ---- Clients ---- #}
+<div class="section" id="clients"><h2>Clients</h2><a class="dim" href="/admin">Manage clients →</a></div>
+{% if clients %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>Client</th><th class="num">New</th><th class="num">Open</th><th class="num">7 d</th><th class="num">30 d</th><th class="num">Won, 30 d</th><th>Last lead</th><th>Setup</th><th></th></tr></thead>
+  <tbody>
+  {% for t in clients %}
+    <tr>
+      <td><a class="name" href="/admin/tenants/{{ t.id }}">{{ t.name }}</a>{% if not t.is_active %} <span class="pill s-lost">paused</span>{% endif %}</td>
+      <td class="num">{% if t.stale_new %}<span class="pill overdue" title="{{ t.stale_new }} untouched over 24 h">{{ t.new_leads }}</span>{% elif t.new_leads %}<span class="pill s-new">{{ t.new_leads }}</span>{% else %}0{% endif %}</td>
+      <td class="num">{{ t.open_leads }}</td>
+      <td class="num">{{ t.leads_7d }}</td>
+      <td class="num">{{ t.leads_30d }}</td>
+      <td class="num">{{ t.won_30d }}{% if t.won_value_30d %} <span class="dim">{{ t.won_value_30d | money }}</span>{% endif %}</td>
+      <td style="white-space:nowrap">{{ t.last_lead_at | relative if t.last_lead_at else '—' }}</td>
+      <td>{% if t.gaps %}{% for g in t.gaps %}<a class="chip gap" href="/admin/tenants/{{ t.id }}">{{ g }}</a> {% endfor %}{% else %}<span class="pill s-won">Ready</span>{% endif %}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <form class="inline-form" method="post" action="/switch-tenant"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="tenant_id" value="{{ t.id }}"><button class="btn ghost small" type="submit">Leads</button></form>
+        <a class="btn ghost small" href="/admin/tenants/{{ t.id }}">Settings</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty"><strong>No clients yet</strong><a class="btn" href="/admin/tenants/new">Add the first client</a></div>
+{% endif %}
+{% endblock %}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -12,8 +13,10 @@ from app.auth import crypto
 from app.auth import service as auth_service
 from app.auth.deps import check_csrf, require_user
 from app.auth.service import AuthError, Principal
+from app.config import get_settings
 from app.db import db
-from app.services.normalize import normalize_phone
+from app.services import messaging
+from app.services.normalize import format_phone_display, normalize_phone
 
 router = APIRouter(prefix="/account", tags=["account"])
 
@@ -39,6 +42,36 @@ def notifications(
             (mobile_e164, notify_sms == "on" and mobile_e164 is not None, notify_email == "on", principal.user_id),
         )
     return RedirectResponse("/account?notice=Saved", status_code=303)
+
+
+@router.post("/test-text", dependencies=[Depends(check_csrf)])
+def test_text(principal: Annotated[Principal, Depends(require_user)]):
+    """Prove the texting pipe end to end: a real text to this user's saved mobile, from the agency number."""
+    mobile = principal.user.get("mobile_e164")
+    if not mobile:
+        return RedirectResponse("/account?error=Save+a+mobile+number+first,+then+send+the+test.", status_code=303)
+    s = get_settings()
+    body = f"{s.agency_name} CRM: texts are working. Reply ? to see the reply codes."
+    with db(None, "system") as conn:
+        r = messaging.send_sms(conn, to=mobile, body=body, kind="test", tenant_id=principal.user["tenant_id"], user_id=principal.user_id)
+    if not r.ok:
+        return RedirectResponse(f"/account?error={quote('Could not send: ' + (r.error or 'no error from the provider'))}", status_code=303)
+    if s.sms_provider != "twilio":
+        return RedirectResponse(f"/account?notice={quote(f'Logged, but SMS_PROVIDER is {s.sms_provider} on this server, so nothing was really sent.')}", status_code=303)
+    return RedirectResponse(f"/account?notice={quote(f'Test text sent to {format_phone_display(mobile)}. Reply ? to it to check the inbound side too.')}", status_code=303)
+
+
+@router.post("/test-email", dependencies=[Depends(check_csrf)])
+def test_email(principal: Annotated[Principal, Depends(require_user)]):
+    s = get_settings()
+    text = f"This is a test from {s.agency_name} CRM. If you are reading it, lead alerts and reminders will reach this inbox.\n\n{s.base_url}"
+    with db(None, "system") as conn:
+        r = messaging.send_email(conn, to=principal.user["email"], subject=f"{s.agency_name} CRM: test email", text=text, html=None, kind="test", tenant_id=principal.user["tenant_id"], user_id=principal.user_id)
+    if not r.ok:
+        return RedirectResponse(f"/account?error={quote('Could not send: ' + (r.error or 'no error from the provider'))}", status_code=303)
+    if s.email_provider not in ("smtp", "postmark", "sendgrid"):
+        return RedirectResponse(f"/account?notice={quote(f'Logged, but EMAIL_PROVIDER is {s.email_provider} on this server, so nothing was really sent.')}", status_code=303)
+    return RedirectResponse(f"/account?notice={quote('Test email sent to ' + principal.user['email'] + '. Check spam if it is not there within a minute.')}", status_code=303)
 
 
 @router.post("/password", dependencies=[Depends(check_csrf)])

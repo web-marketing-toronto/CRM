@@ -390,6 +390,17 @@ def user_create(
     return web.render(request, "admin/tenant.html", error=None, notice=f"Login created for {email.strip()}. Give them this temporary password now; it is not shown again.", new_user_password=temp_password, **_tenant_ctx(tenant_id))
 
 
+def _users_page(user: dict) -> str:
+    """Where a user is managed: their client's settings page, or the Team page for agency staff."""
+    return f"/admin/tenants/{user['tenant_id']}" if user.get("tenant_id") else "/admin/team"
+
+
+def _render_users_page(request: Request, user: dict, *, notice: str | None, error: str | None = None, temp_password: str | None = None, status_code: int = 200):
+    if user.get("tenant_id"):
+        return web.render(request, "admin/tenant.html", status_code=status_code, error=error, notice=notice, new_user_password=temp_password, **_tenant_ctx(user["tenant_id"]))
+    return web.render(request, "admin/team.html", status_code=status_code, error=error, notice=notice, new_user_password=temp_password, **_team_ctx())
+
+
 @router.post("/users/{user_id}/reset-mfa", dependencies=[Depends(check_csrf)])
 def user_reset_mfa(user_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
     with db(None, "agency_admin") as conn:
@@ -397,7 +408,7 @@ def user_reset_mfa(user_id: UUID, principal: Annotated[Principal, Depends(requir
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         auth_service.reset_totp(conn, user_id, by_user_id=principal.user_id)
-    return RedirectResponse(f"/admin/tenants/{user['tenant_id']}?notice=Authenticator cleared. They will set up a new one at next login.", status_code=303)
+    return RedirectResponse(f"{_users_page(user)}?notice=Authenticator cleared. They will set up a new one at next login.", status_code=303)
 
 
 @router.post("/users/{user_id}/reset-password", dependencies=[Depends(check_csrf)])
@@ -413,19 +424,75 @@ def user_reset_password(request: Request, user_id: UUID, principal: Annotated[Pr
         conn.execute("UPDATE app_user SET must_set_password = true, failed_logins = 0, locked_until = NULL WHERE id = %s", (user_id,))
         conn.execute("UPDATE session SET revoked_at = now() WHERE user_id = %s AND revoked_at IS NULL", (user_id,))
         auth_service.audit(conn, action="password_reset_by_agency", user_id=principal.user_id, tenant_id=user["tenant_id"], target_type="user", target_id=str(user_id))
-    return web.render(request, "admin/tenant.html", error=None, notice=f"Temporary password set for {user['email']}. Give it to them now; it is not shown again.", new_user_password=temp_password, **_tenant_ctx(user["tenant_id"]))
+    return _render_users_page(request, user, notice=f"Temporary password set for {user['email']}. Give it to them now; it is not shown again.", temp_password=temp_password)
 
 
 @router.post("/users/{user_id}/toggle-active", dependencies=[Depends(check_csrf)])
 def user_toggle(user_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
     with db(None, "agency_admin") as conn:
-        user = conn.execute("UPDATE app_user SET is_active = NOT is_active WHERE id = %s RETURNING tenant_id, is_active", (user_id,)).fetchone()
+        user = conn.execute("SELECT tenant_id, role, is_active FROM app_user WHERE id = %s", (user_id,)).fetchone()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        if user["role"] == Role.AGENCY_ADMIN.value and user["is_active"]:
+            if user_id == principal.user_id:
+                return RedirectResponse("/admin/team?error=You can't disable your own login. Ask another team member to.", status_code=303)
+            others = conn.execute("SELECT count(*) AS n FROM app_user WHERE role = 'agency_admin' AND is_active AND id <> %s", (user_id,)).fetchone()["n"]
+            if others == 0:
+                return RedirectResponse("/admin/team?error=That is the last active agency login; add another team member first.", status_code=303)
+        user = conn.execute("UPDATE app_user SET is_active = NOT is_active WHERE id = %s RETURNING tenant_id, is_active", (user_id,)).fetchone()
         if not user["is_active"]:
             conn.execute("UPDATE session SET revoked_at = now() WHERE user_id = %s AND revoked_at IS NULL", (user_id,))
         auth_service.audit(conn, action="user_active_toggled", user_id=principal.user_id, tenant_id=user["tenant_id"], target_type="user", target_id=str(user_id), detail={"is_active": user["is_active"]})
-    return RedirectResponse(f"/admin/tenants/{user['tenant_id']}", status_code=303)
+    return RedirectResponse(_users_page(user), status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Team: the agency's own logins
+# ---------------------------------------------------------------------------
+
+def _team_ctx() -> dict:
+    with db(None, "agency_admin") as conn:
+        members = conn.execute("SELECT * FROM app_user WHERE role = 'agency_admin' ORDER BY is_active DESC, name").fetchall()
+        active_sessions = {
+            r["user_id"]: r["last_seen_at"]
+            for r in conn.execute("SELECT user_id, max(last_seen_at) AS last_seen_at FROM session WHERE revoked_at IS NULL AND expires_at > now() GROUP BY user_id").fetchall()
+        }
+    return {"members": members, "active_sessions": active_sessions, "active_count": sum(1 for m in members if m["is_active"])}
+
+
+@router.get("/team")
+def team(request: Request, principal: Annotated[Principal, Depends(require_agency)], notice: str | None = None, error: str | None = None):
+    return web.render(request, "admin/team.html", notice=notice, error=error, new_user_password=None, **_team_ctx())
+
+
+@router.post("/team", dependencies=[Depends(check_csrf)])
+def team_add(
+    request: Request,
+    principal: Annotated[Principal, Depends(require_agency)],
+    name: Annotated[str, Form()],
+    email: Annotated[str, Form()],
+    mobile: Annotated[str, Form()] = "",
+):
+    import secrets
+
+    temp_password = secrets.token_urlsafe(9)
+    try:
+        if not name.strip() or not email.strip():
+            raise AuthError("A name and an email address are both needed.")
+        mobile_e164 = normalize_phone(mobile) if mobile.strip() else None
+        if mobile.strip() and not mobile_e164:
+            raise AuthError("That mobile number doesn't look right.")
+        with db(None, "agency_admin") as conn:
+            if conn.execute("SELECT 1 FROM app_user WHERE email_lower = lower(%s)", (email.strip(),)).fetchone():
+                raise AuthError("That email already has a login.")
+            auth_service.create_user(conn, email=email, name=name, role=Role.AGENCY_ADMIN, tenant_id=None, password=temp_password, mobile_e164=mobile_e164)
+            auth_service.audit(conn, action="team_member_created", user_id=principal.user_id, tenant_id=None, target_type="user", target_id=email.strip())
+    except (AuthError, ValueError) as exc:
+        return web.render(request, "admin/team.html", status_code=400, error=str(exc), notice=None, new_user_password=None, **_team_ctx())
+    return web.render(
+        request, "admin/team.html", error=None, new_user_password=temp_password, **_team_ctx(),
+        notice=f"Login created for {email.strip()}. Give them this temporary password now; it is not shown again. They'll choose their own password and set up an authenticator app at first sign-in.",
+    )
 
 
 # ---------------------------------------------------------------------------
