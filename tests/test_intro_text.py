@@ -139,3 +139,35 @@ def test_members_cannot_edit_the_wording_and_other_settings_survive(client, make
     s = admin_conn.execute("SELECT settings FROM tenant WHERE id = %s", (t["id"],)).fetchone()["settings"]
     assert s["lead_messaging"]["templates"] == {"ack": "Custom ack {first_name}", "intro": "Hi {first_name}, new wording."}
     assert s["lead_messaging"]["ack"] is False and s["sms"] == {"relay_replies": False}
+
+
+def test_email_button_offers_a_choice_then_remembers_it(client, make_tenant, make_user, admin_conn):
+    from urllib.parse import parse_qs, urlparse
+
+    t = make_tenant("ital", name="Ital Paving", twilio_number="+12495550100")
+    make_user("jb@ital.test", tenant_id=t["id"], role="member", name="Jeffrey Braun", mobile="+17055550199")
+    lead_id = _lead(client, t, email="karen@example.com")
+    client.post("/login", data={"email": "jb@ital.test", "password": "correct-horse-battery"})
+    html = client.get(f"/leads/{lead_id}").text
+    # No preference yet: the button is a menu with the three ways to open the email.
+    assert '<details class="act-menu">' in html and "Gmail in the browser" in html and "Outlook on the web" in html and "Mail app on this device" in html
+    gmail = re.search(r'href="(https://mail\.google\.com/mail/\?[^"]+)"', html).group(1).replace("&amp;", "&")
+    q = parse_qs(urlparse(gmail).query)
+    assert q["to"] == ["karen@example.com"] and q["su"] == ["Ital Paving: your driveway paving"]
+    assert q["body"][0].startswith("Hi Karen, thanks for reaching out about your driveway paving.")
+    assert "outlook.office.com/mail/deeplink/compose?to=karen%40example.com" in html
+    assert 'href="mailto:karen@example.com?subject=Ital%20Paving' in html
+
+    # "Always use Gmail" from the menu saves the preference and comes straight back to the lead.
+    csrf = csrf_from(client)
+    r = client.post("/account/email-client", data={"email_client": "gmail", "next": f"/leads/{lead_id}", "csrf_token": csrf}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/leads/{lead_id}"
+    assert admin_conn.execute("SELECT email_client FROM app_user WHERE email = 'jb@ital.test'").fetchone()["email_client"] == "gmail"
+    html = client.get(f"/leads/{lead_id}").text
+    assert '<details class="act-menu">' not in html
+    assert re.search(r'<a class="act" href="https://mail\.google\.com/[^"]+" target="_blank" rel="noopener" data-touch="email">', html)
+    assert "Gmail · karen@example.com" in html
+    # The Account page shows the choice and an unknown value falls back to asking.
+    assert 'value="gmail" checked' in client.get("/account").text
+    client.post("/account/email-client", data={"email_client": "pigeon", "csrf_token": csrf}, follow_redirects=False)
+    assert admin_conn.execute("SELECT email_client FROM app_user WHERE email = 'jb@ital.test'").fetchone()["email_client"] == "ask"

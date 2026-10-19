@@ -44,6 +44,20 @@ def notifications(
     return RedirectResponse("/account?notice=Saved", status_code=303)
 
 
+EMAIL_CLIENTS = ("ask", "mailto", "gmail", "outlook")
+
+
+@router.post("/email-client", dependencies=[Depends(check_csrf)])
+def email_client(principal: Annotated[Principal, Depends(require_user)], email_client: Annotated[str, Form()] = "ask", next: Annotated[str, Form()] = ""):
+    """Which program the Email button on a lead opens."""
+    choice = email_client if email_client in EMAIL_CLIENTS else "ask"
+    with db(None, "system") as conn:
+        conn.execute("UPDATE app_user SET email_client = %s WHERE id = %s", (choice, principal.user_id))
+    if next.startswith("/") and not next.startswith("//"):
+        return RedirectResponse(next, status_code=303)
+    return RedirectResponse("/account?notice=Saved", status_code=303)
+
+
 @router.post("/test-text", dependencies=[Depends(check_csrf)])
 def test_text(principal: Annotated[Principal, Depends(require_user)]):
     """Prove the texting pipe end to end: a real text to this user's saved mobile, from the agency number."""

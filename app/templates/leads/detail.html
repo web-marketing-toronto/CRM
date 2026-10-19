@@ -13,7 +13,7 @@
   var csrf = document.querySelector('meta[name="csrf-token"]').content;
   // Call / Text / Email: let the phone open the dialer or Messages, and log the attempt in the background.
   document.addEventListener('click', function (e) {
-    var a = e.target.closest('a.act[data-touch]');
+    var a = e.target.closest('a[data-touch]');
     if (!a) return;
     var card = a.closest('#lead');
     var url = '/leads/' + card.dataset.lead + '/touch';

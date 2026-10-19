@@ -84,10 +84,27 @@
       <span class="act" aria-disabled="true">Text <small>no phone number</small></span>
       {% endif %}
       {% if lead.email %}
-      <a class="act" href="mailto:{{ lead.email }}" data-touch="email">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
-        Email <small>{{ lead.email }}</small>
-      </a>
+      {% set mail_icon %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="m22 6-10 7L2 6"/></svg>{% endset %}
+      {% if email_links.choice == 'gmail' %}
+      <a class="act" href="{{ email_links.gmail }}" target="_blank" rel="noopener" data-touch="email">{{ mail_icon }}Email <small>Gmail · {{ lead.email }}</small></a>
+      {% elif email_links.choice == 'outlook' %}
+      <a class="act" href="{{ email_links.outlook }}" target="_blank" rel="noopener" data-touch="email">{{ mail_icon }}Email <small>Outlook · {{ lead.email }}</small></a>
+      {% elif email_links.choice == 'mailto' %}
+      <a class="act" href="{{ email_links.mailto }}" data-touch="email">{{ mail_icon }}Email <small>{{ lead.email }}</small></a>
+      {% else %}
+      <details class="act-menu">
+        <summary class="act">{{ mail_icon }}Email <small>{{ lead.email }}</small></summary>
+        <div class="menu">
+          <a href="{{ email_links.gmail }}" target="_blank" rel="noopener" data-touch="email">Gmail in the browser</a>
+          <a href="{{ email_links.outlook }}" target="_blank" rel="noopener" data-touch="email">Outlook on the web</a>
+          <a href="{{ email_links.mailto }}" data-touch="email">Mail app on this device</a>
+          <form method="post" action="/account/email-client"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next" value="/leads/{{ lead.id }}">
+            <span class="dim">Always use:</span>
+            <button type="submit" name="email_client" value="gmail">Gmail</button> · <button type="submit" name="email_client" value="outlook">Outlook</button> · <button type="submit" name="email_client" value="mailto">Mail app</button>
+          </form>
+        </div>
+      </details>
+      {% endif %}
       {% else %}
       <span class="act" aria-disabled="true">Email <small>no email</small></span>
       {% endif %}

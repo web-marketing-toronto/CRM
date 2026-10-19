@@ -109,6 +109,25 @@ def _load(principal: Principal, lead_id: UUID) -> dict:
     return lead
 
 
+def svc_email_links(lead: dict, tenant: dict | None, principal: Principal, intro: str) -> dict:
+    """Compose links for the Email button: the device's mail app, Gmail in the browser, Outlook on the web.
+    The subject names the business and the job; the body starts with the first-text wording when the lead
+    hasn't been contacted yet."""
+    from urllib.parse import quote, urlencode
+
+    to = lead.get("email") or ""
+    job = (lead.get("job_type") or "").strip().lower()
+    subject = f"{(tenant or {}).get('name') or principal.tenant['name']}: your {job or 'request'}"
+    body = intro or ""
+    q = {"subject": subject, "body": body}
+    return {
+        "choice": principal.user.get("email_client") or "ask",
+        "mailto": f"mailto:{to}?" + urlencode(q, quote_via=quote),
+        "gmail": "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "to": to, "su": subject, "body": body}, quote_via=quote),
+        "outlook": "https://outlook.office.com/mail/deeplink/compose?" + urlencode({"to": to, **q}, quote_via=quote),
+    }
+
+
 def _detail_context(principal: Principal, lead_id: UUID) -> dict:
     with db(principal.tenant_id, principal.db_role) as conn:
         lead = svc.get_lead(conn, lead_id)
@@ -133,6 +152,7 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         intro = "" if texted_before or not full_tenant or lead.get("status") in ("won", "lost") else lead_messages.intro_text(conn, full_tenant, lead, principal.user)
     return {
         "intro": intro,
+        "email_links": svc_email_links(lead, full_tenant, principal, intro),
         "sync": sync,
         "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),
