@@ -311,24 +311,34 @@ def test_google_ads_check_lists_actions_and_flags_problems(client, make_tenant, 
     adplatforms.outbox.fake_check = {
         "creds": "google-ads.yaml", "login_customer_id": "1112223333",
         "account": {"id": "5556667777", "name": "North Ridge Roofing", "currency": "CAD", "time_zone": "America/Toronto", "manager": False},
-        "actions": [
-            {"id": "900001", "name": "CRM Qualified Lead", "status": "ENABLED", "type": "UPLOAD_CLICKS", "category": "QUALIFIED_LEAD", "primary": False},
-            {"id": "900002", "name": "CRM Closed Won", "status": "ENABLED", "type": "UPLOAD_CLICKS", "category": "CONVERTED_LEAD", "primary": True},
-            {"id": "900003", "name": "Old import", "status": "REMOVED", "type": "UPLOAD_CLICKS", "category": "LEAD", "primary": False},
-        ],
+        "actions": [adplatforms.describe_action(a) for a in [
+            {"id": "900001", "name": "CRM Qualified Lead", "status": "ENABLED", "type": "UPLOAD_CLICKS", "category": "QUALIFIED_LEAD", "primaryForGoal": False},
+            {"id": "900002", "name": "CRM Closed Won", "status": "PAUSED", "type": "UPLOAD_CLICKS", "category": "CONVERTED_LEAD", "primaryForGoal": True},
+            {"id": "7568256623", "name": "Form submission", "status": "ENABLED", "type": "WEBPAGE", "category": "SUBMIT_LEAD_FORM", "primaryForGoal": True},
+            {"id": "7408573326", "name": "First Time Phone Call", "status": "ENABLED", "type": "UPLOAD_CALLS", "category": "DEFAULT", "primaryForGoal": True},
+        ]],
         "spend_7d": 412.5,
     }
     r = client.post(
         f"/admin/tenants/{t['id']}/google-ads/check",
-        data={"google_customer_id": "555-666-7777", "google_qualified_action": "900001", "google_won_action": "customers/5556667777/conversionActions/900003", "csrf_token": csrf},
+        data={"google_customer_id": "555-666-7777", "google_qualified_action": "7568256623", "google_won_action": "customers/5556667777/conversionActions/900002", "csrf_token": csrf},
     )
     assert r.status_code == 200, r.text
     html = r.text
     assert "Connected." in html and "North Ridge Roofing" in html and "$412" in html and "1112223333" in html
-    assert "CRM Qualified Lead" in html and "Qualified ✓" in html
-    assert "Old import (900003) is removed" in html          # the configured Won id points at a removed action
-    assert "Use for Qualified" in html and 'value="555-666-7777"' in html  # typed id kept on the page, not saved
+    # The website-tag action is shown but explained, with no Use buttons; the configured Qualified id pointing at it is called out.
+    assert "Form submission" in html and "website tag" in html and "can't receive uploads" in html and "Qualified ✗" in html
+    assert "Form submission (7568256623) is a website tag action" in html and "needs its own action" in html
+    assert "import of calls (CallRail)" in html
+    assert html.count("Use for Qualified") == 2  # only the two UPLOAD_CLICKS actions
+    assert "CRM Closed Won (900002) is paused" in html and "CRM Closed Won (900002) is a primary action" in html and "Won ✓" in html
+    assert 'value="555-666-7777"' in html  # typed id kept on the page, not saved
     assert admin_conn.execute("SELECT settings->'google_ads' AS g FROM tenant WHERE id = %s", (t["id"],)).fetchone()["g"] is None
+
+    # An account with nothing uploadable gets the how-to.
+    adplatforms.outbox.fake_check["actions"] = [a for a in adplatforms.outbox.fake_check["actions"] if not a["uploadable"]]
+    html = client.post(f"/admin/tenants/{t['id']}/google-ads/check", data={"google_customer_id": "5556667777", "csrf_token": csrf}).text
+    assert "no conversion action that can receive CRM uploads yet" in html and "Track conversions from clicks" in html
 
     # A manager account id is called out; a missing id is refused before any call.
     adplatforms.outbox.fake_check["account"]["manager"] = True

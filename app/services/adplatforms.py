@@ -319,6 +319,37 @@ def _google_error(r: httpx.Response) -> str:
     return f"{code}: {hint or detail}"[:400]
 
 
+# How a conversion action is recorded, in words a person setting it up will recognise. Only UPLOAD_CLICKS
+# actions ("Import → CRMs, files, or other data sources → Track conversions from clicks") accept what the
+# CRM sends; everything else is fed by a tag, a call, or an app and rejects uploads.
+ACTION_TYPES = {
+    "UPLOAD_CLICKS": "import from clicks (CRM)",
+    "UPLOAD_CALLS": "import of calls (CallRail)",
+    "WEBPAGE": "website tag",
+    "WEBPAGE_CODELESS": "website tag",
+    "WEBSITE_CALL": "calls from the website",
+    "AD_CALL": "calls from ads",
+    "CLICK_TO_CALL": "click to call",
+    "LEAD_FORM_SUBMIT": "lead form asset",
+    "GOOGLE_ANALYTICS_4_CUSTOM": "Google Analytics",
+    "GOOGLE_ANALYTICS_4_PURCHASE": "Google Analytics",
+    "STORE_VISITS": "store visits",
+    "STORE_SALES": "store sales",
+    "FIREBASE_ANDROID_FIRST_OPEN": "app",
+    "FIREBASE_IOS_FIRST_OPEN": "app",
+    "ANDROID_APP_PRE_REGISTRATION": "app",
+}
+
+
+def describe_action(a: dict[str, Any]) -> dict[str, Any]:
+    kind = str(a.get("type", ""))
+    return {
+        "id": str(a.get("id", "")), "name": a.get("name", ""), "status": a.get("status", ""), "type": kind,
+        "type_label": ACTION_TYPES.get(kind, kind.lower().replace("_", " ")), "uploadable": kind == "UPLOAD_CLICKS",
+        "category": a.get("category", ""), "primary": bool(a.get("primaryForGoal")),
+    }
+
+
 def google_check(customer_id: str) -> dict[str, Any]:
     """Prove the Google Ads hookup for one client without sending anything: credentials present, OAuth
     works, the MCC can see the account, and which upload-type conversion actions exist. Raises AdsError
@@ -352,15 +383,10 @@ def google_check(customer_id: str) -> dict[str, Any]:
     account = {"id": str(c.get("id", customer_id)), "name": c.get("descriptiveName", ""), "currency": c.get("currencyCode", ""), "time_zone": c.get("timeZone", ""), "manager": bool(c.get("manager"))}
     rows = query(
         "SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category, conversion_action.primary_for_goal "
-        "FROM conversion_action WHERE conversion_action.type IN ('UPLOAD_CLICKS', 'UPLOAD_CALLS') ORDER BY conversion_action.name"
+        "FROM conversion_action WHERE conversion_action.status != 'REMOVED' ORDER BY conversion_action.name"
     )
-    actions = [
-        {
-            "id": str(r["conversionAction"]["id"]), "name": r["conversionAction"].get("name", ""), "status": r["conversionAction"].get("status", ""),
-            "type": r["conversionAction"].get("type", ""), "category": r["conversionAction"].get("category", ""), "primary": bool(r["conversionAction"].get("primaryForGoal")),
-        }
-        for r in rows
-    ]
+    actions = [describe_action(r["conversionAction"]) for r in rows]
+    actions.sort(key=lambda a: (not a["uploadable"], a["name"].lower()))
     spend = query("SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_7_DAYS")
     spend_7d = sum(int(r.get("metrics", {}).get("costMicros", 0)) for r in spend) / 1_000_000
     return {"creds": google_creds_source(), "identity": creds.identity, "login_customer_id": creds.login_customer_id, "account": account, "actions": actions, "spend_7d": spend_7d}

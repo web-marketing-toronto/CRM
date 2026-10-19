@@ -263,7 +263,7 @@ async def google_ads_check(request: Request, tenant_id: UUID, principal: Annotat
         result = adplatforms.google_check(cfg["customer_id"])
     except adplatforms.AdsError as exc:
         return web.render(request, "admin/tenant.html", error=None, notice=None, new_user_password=None, google_check={"ok": False, "error": str(exc)}, **ctx)
-    ids = {a["id"] for a in result["actions"]}
+    by_id = {a["id"]: a for a in result["actions"]}
     def configured(key: str) -> str:
         # Either the numeric id or customers/…/conversionActions/<id>; compare on the id.
         return re.sub(r"\D", "", (cfg.get(key) or "").rsplit("/", 1)[-1])
@@ -271,13 +271,24 @@ async def google_ads_check(request: Request, tenant_id: UUID, principal: Annotat
     problems = []
     if result["account"]["manager"]:
         problems.append("That id is a manager (MCC) account. Use the client's own account id; uploads go to the account the clicks belong to.")
-    if not result["actions"]:
-        problems.append("No import-from-clicks conversion actions in this account yet. Create CRM Qualified Lead and CRM Closed Won (see the ⓘ above), then check again.")
+    if not any(a["uploadable"] for a in result["actions"]):
+        problems.append(
+            "This account has no conversion action that can receive CRM uploads yet. In the client's Google Ads: Goals → Conversions → New conversion action → "
+            "Import → CRMs, files, or other data sources → Track conversions from clicks. Create CRM Qualified Lead (category Qualified lead) and CRM Closed Won "
+            "(category Converted lead), both secondary, then check again."
+        )
     for label, v in (("Qualified", q), ("Won", w)):
-        if v and v not in ids:
-            problems.append(f"The {label} conversion action id {v} isn't an import-from-clicks action in this account.")
-        elif v:
-            a = next(x for x in result["actions"] if x["id"] == v)
+        if not v:
+            continue
+        a = by_id.get(v)
+        if a is None:
+            problems.append(f"The {label} conversion action id {v} isn't in this account (or was removed).")
+        elif not a["uploadable"]:
+            problems.append(
+                f"{a['name']} ({v}) is a {a['type_label']} action. Google only accepts CRM uploads into actions created as Import → CRMs, files, or other data sources → "
+                f"Track conversions from clicks, so the {label} outcome needs its own action; the {a['type_label']} one keeps counting on its own."
+            )
+        else:
             if a["status"] != "ENABLED":
                 problems.append(f"{a['name']} ({v}) is {a['status'].lower()}; Google ignores uploads to it.")
             if a["primary"]:

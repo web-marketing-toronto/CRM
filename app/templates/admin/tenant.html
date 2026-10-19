@@ -238,23 +238,26 @@
         {% for p in google_check.problems %}<div class="gcheck-problem">{{ p }}</div>{% endfor %}
         {% if google_check.actions %}
         <table class="data" style="margin-top:10px;background:var(--card)">
-          <thead><tr><th>Conversion action</th><th>Id</th><th>Status</th><th>Goal</th><th></th></tr></thead>
+          <thead><tr><th>Conversion action</th><th>Id</th><th>Recorded by</th><th>Status</th><th>Goal</th><th></th></tr></thead>
           <tbody>
           {% for a in google_check.actions %}
-          <tr>
-            <td>{{ a.name }}{% if a.id == google_check.qualified %} <span class="pill s-won">Qualified ✓</span>{% endif %}{% if a.id == google_check.won %} <span class="pill s-won">Won ✓</span>{% endif %}</td>
+          <tr {% if not a.uploadable %}style="color:var(--ink-3)"{% endif %}>
+            <td>{{ a.name }}{% if a.id == google_check.qualified %} <span class="pill {{ 's-won' if a.uploadable else 'overdue' }}">Qualified {{ '✓' if a.uploadable else '✗' }}</span>{% endif %}{% if a.id == google_check.won %} <span class="pill {{ 's-won' if a.uploadable else 'overdue' }}">Won {{ '✓' if a.uploadable else '✗' }}</span>{% endif %}</td>
             <td><code>{{ a.id }}</code></td>
+            <td>{{ a.type_label }}{% if not a.uploadable %} · <em>can't receive uploads</em>{% endif %}</td>
             <td>{{ a.status | lower }}</td>
             <td>{{ 'primary' if a.primary else 'secondary' }} · {{ a.category | lower | replace('_', ' ') }}</td>
             <td style="white-space:nowrap;text-align:right">
+              {% if a.uploadable %}
               <button class="btn ghost small" type="button" onclick="document.getElementById('google_qualified_action').value='{{ a.id }}'">Use for Qualified</button>
               <button class="btn ghost small" type="button" onclick="document.getElementById('google_won_action').value='{{ a.id }}'">Use for Won</button>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}
           </tbody>
         </table>
-        <div class="dim" style="font-size:13px;margin-top:8px">"Use for…" fills the field above; press <strong>Save</strong> at the bottom to keep it.</div>
+        <div class="dim" style="font-size:13px;margin-top:8px">Only "import from clicks (CRM)" actions can take what the CRM sends. "Use for…" fills the field above; press <strong>Save</strong> at the bottom to keep it.</div>
         {% endif %}
         {% endif %}
       </div>
