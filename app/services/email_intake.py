@@ -99,28 +99,81 @@ _LONG_KEYS = ("message", "comments", "comment", "notes", "details", "description
 _NOISE = re.compile(r"(unsubscribe|view (this|in) browser|powered by|sent (from|via|by)|this email was|do not reply|copyright|all rights reserved)", re.I)
 
 
+_META = re.compile(r"(?is)<meta\s+[^>]*?name\s*=\s*[\"']?(?:lead|form)[_-]([a-z0-9_]+)[\"']?[^>]*?content\s*=\s*[\"']([^\"']*)[\"']")
+_META_REV = re.compile(r"(?is)<meta\s+[^>]*?content\s*=\s*[\"']([^\"']*)[\"'][^>]*?name\s*=\s*[\"']?(?:lead|form)[_-]([a-z0-9_]+)[\"']?")
+
+
+def meta_fields(markup: str) -> dict[str, str]:
+    """Some platforms (RealtyNinja) put the lead in <meta name="lead_name" content="…"> tags in the head.
+    Those are exact, so they win over anything read from the visible layout."""
+    out: dict[str, str] = {}
+    for key, value in _META.findall(markup) + [(k, v) for v, k in _META_REV.findall(markup)]:
+        key = attribution.normalize_key(key)
+        value = html.unescape(value).strip()
+        if key and value and key not in out and key not in ("information_version", "version"):
+            out[key] = value
+    return out
+
+
+def _cell_text(fragment: str) -> str:
+    # Paragraph-level breaks keep a blank line, so a label's value stops at the next paragraph.
+    t = re.sub(r"(?i)\s*(?:</(?:p|div|h[1-6])>|<hr[^>]*>)\s*", "\n\n", fragment)
+    t = re.sub(r"(?i)\s*(?:<br\s*/?>|</li>)\s*", "\n", t)
+    t = re.sub(r"(?is)<a [^>]*href=\"mailto:([^\"]+)\"[^>]*>.*?</a>", r"\1", t)
+    t = re.sub(r"(?is)<a [^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", lambda m: m.group(2) if m.group(1) in m.group(2) or not m.group(2).strip() else f"{m.group(2)} {m.group(1)}", t)
+    t = html.unescape(re.sub(r"<[^>]+>", " ", t))
+    lines = [re.sub(r"[ \t\xa0\r]+", " ", ln).strip() for ln in t.split("\n")]
+    out: list[str] = []
+    for ln in lines:
+        if ln or (out and out[-1]):
+            out.append(ln)
+    return "\n".join(out).strip()
+
+
+def _table_to_text(inner: str) -> str:
+    """One table (no nested tables left in it): each row becomes 'Label: value' when it has two cells,
+    otherwise its cells one per line."""
+    lines: list[str] = []
+    for row in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", inner):
+        cells = [c for c in (_cell_text(c) for c in re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", row)) if c]
+        if not cells:
+            continue
+        if len(cells) == 2 and "\n" not in cells[0] and len(cells[0]) <= 60:
+            label = cells[0].rstrip(":").strip()
+            lines.append(f"{label}: {cells[1]}" if "\n" not in cells[1] else f"{label}:\n{cells[1]}")
+        else:
+            lines.extend(cells)
+    return "\n" + "\n".join(lines) + "\n"
+
+
 def html_to_text(markup: str) -> str:
-    """Enough HTML-to-text for notification emails: table cells become 'Label: value' lines."""
-    t = re.sub(r"(?is)<(script|style|head)[^>]*>.*?</\1>", " ", markup)
-    t = re.sub(r"(?i)</t[dh]>\s*<t[dh][^>]*>", ": ", t)          # label cell | value cell
-    t = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h[1-6]|table)>", "\n", t)
-    t = re.sub(r"(?i)<a [^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", lambda m: f"{m.group(2)} {m.group(1)}" if m.group(2).strip() and m.group(1) not in m.group(2) else m.group(1), t)
-    t = re.sub(r"<[^>]+>", " ", t)
-    t = html.unescape(t)
-    lines = [re.sub(r"[ \t\xa0]+", " ", ln).strip() for ln in t.splitlines()]
-    return "\n".join(ln for ln in lines if ln)
+    """Enough HTML-to-text for notification emails: nested layout tables are flattened innermost first,
+    so a label cell and its value cell come out as one 'Label: value' line."""
+    t = re.sub(r"(?is)<(script|style|head|title)[^>]*>.*?</\1>", " ", markup)
+    t = re.sub(r"(?is)<div[^>]*display:\s*none[^>]*>.*?</div>", " ", t)  # hidden preheaders
+    for _ in range(50):
+        m = re.search(r"(?is)<table[^>]*>((?:(?!<table\b).)*?)</table>", t)
+        if not m:
+            break
+        t = t[: m.start()] + _table_to_text(m.group(1)) + t[m.end():]
+    return _cell_text(t)
 
 
-def body_text(msg: EmailMessage) -> str:
+def body_text(msg: EmailMessage) -> tuple[str, dict[str, str]]:
+    """(text to parse, exact fields from meta tags if the HTML part carries any)."""
+    meta: dict[str, str] = {}
+    rich = msg.get_body(preferencelist=("html",))
+    if rich is not None:
+        markup = rich.get_content()
+        meta = meta_fields(markup)
     plain = msg.get_body(preferencelist=("plain",))
     if plain is not None:
         text = plain.get_content()
         if text.strip():
-            return text
-    rich = msg.get_body(preferencelist=("html",))
+            return text, meta
     if rich is not None:
-        return html_to_text(rich.get_content())
-    return ""
+        return html_to_text(markup), meta
+    return "", meta
 
 
 def parse_fields(subject: str, text: str, *, exclude_emails: tuple[str, ...] = ()) -> dict[str, str]:
@@ -139,6 +192,9 @@ def parse_fields(subject: str, text: str, *, exclude_emails: tuple[str, ...] = (
         if m and not _URL.match(line.strip()):
             key = attribution.normalize_key(m.group(1))
             value = m.group(2).strip()
+            if len(key) > 40 and not value:
+                current = None  # a long label ("The user agreed to the following disclaimer:") ends the previous value
+                continue
             if key and len(key) <= 40:
                 if key in fields and value:
                     # Repeated label (e.g. two "Phone:" lines): keep the first, unless it was blank.
@@ -155,7 +211,7 @@ def parse_fields(subject: str, text: str, *, exclude_emails: tuple[str, ...] = (
     if not any(fields.get(k) for k in attribution.ALIASES["email"]):
         own = (get_settings().email_from or "@").lower().split("@", 1)[1]
         skip = {e.lower() for e in exclude_emails}
-        found = [e for e in _EMAIL.findall(text) if e.lower() not in skip and not e.lower().endswith("@" + own) and not re.match(r"(no-?reply|notifications?|mailer|bounce)", e, re.I)]
+        found = [e for e in _EMAIL.findall(text) if e.lower() not in skip and not e.lower().endswith("@" + own) and not re.match(r"(no-?reply|notifications?|mailer|bounce|support|abuse|help|info)@", e, re.I)]
         if found:
             fields["email"] = found[0]
     if not any(fields.get(k) for k in attribution.ALIASES["phone"]):
@@ -167,9 +223,9 @@ def parse_fields(subject: str, text: str, *, exclude_emails: tuple[str, ...] = (
         if m and "@" not in m.group(1) and not re.search(r"\b(your|the|our|a|new)\b|website|web site|site|form|page|listing", m.group(1), re.I):
             fields["name"] = m.group(1).strip()[:200]
     if not any(fields.get(k) for k in attribution.ATTRIBUTION_ALIASES["landing_page"]):
-        for key in ("listing", "listing_url", "property_url", "page", "link", "url"):
-            if fields.get(key) and _URL.search(fields[key]):
-                fields["page_url"] = _URL.search(fields[key]).group(0)
+        for key, value in fields.items():
+            if re.search(r"page|url|link|listing|property|form", key) and value and _URL.search(value):
+                fields["page_url"] = _URL.search(value).group(0)
                 break
     fields.setdefault("form_name", subject.strip()[:120])
     return fields
@@ -255,8 +311,12 @@ def process_message(conn: psycopg.Connection, raw: bytes, *, now: datetime | Non
     if tenant is None:
         record("ignored")
         return "ignored", None
-    text = body_text(msg)
-    parsed = parse_fields(subject, text, exclude_emails=tuple(a for a in from_addr.split(", ") if a))
+    text, meta = body_text(msg)
+    parsed = {**parse_fields(subject, text, exclude_emails=tuple(a for a in from_addr.split(", ") if a)), **meta}
+    # Platforms usually set Reply-To to the person who filled in the form.
+    reply_to = next((a for _, a in getaddresses([str(msg.get("Reply-To") or "")]) if a), "")
+    if reply_to and not any(parsed.get(k) for k in attribution.ALIASES["email"]) and not reply_to.lower().endswith("@" + (get_settings().email_from or "@").split("@", 1)[1]):
+        parsed["email"] = reply_to
     payload: dict[str, Any] = {**parsed, "_email": {"subject": subject, "from": from_addr, "to": to_addr, "received_at": received_at.isoformat() if received_at else None, "body": text[:BODY_KEEP]}}
     fields = attribution.interpret(parsed, tenant.get("field_map") or {}, default_channel=Channel.WEBSITE_FORM)
     try:
