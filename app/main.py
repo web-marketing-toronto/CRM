@@ -24,6 +24,7 @@ from app.routers import (
     health,
     intake,
     leads,
+    messages,
     reports,
     sources,
     twilio,
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(account.router)
     app.include_router(leads.router)
+    app.include_router(messages.router)
     app.include_router(admin.router)
     app.include_router(dashboard.router)
     app.include_router(reports.router)

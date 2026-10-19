@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Text wording{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:6px">Text wording</h1>
+<p class="muted" style="margin-bottom:16px">When you tap <strong>Text</strong> on a new lead, this is what Messages opens with, filled in for that lead and signed with your name. Change it whenever you like; it takes effect on the next tap. Nothing goes out until you press send on your phone.</p>
+
+{% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+{% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+
+<form class="panel" method="post" action="/messages">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="field">
+    <label for="template">Your first text to a lead</label>
+    <textarea id="template" name="template" maxlength="{{ max_len }}" style="min-height:140px" placeholder="{{ default_template }}">{{ template }}</textarea>
+    <div class="help"><span id="count">{{ template | length }}</span> characters · a text is 160; longer ones arrive in parts, which is fine</div>
+  </div>
+
+  <div class="preview-box">
+    <div class="dim" style="font-size:13px;margin-bottom:6px">Preview · how {{ preview_name }} would get it from {{ principal.user.name }}</div>
+    <div id="preview" class="bubble">{{ preview }}</div>
+    {% if preview_error %}<div class="error-box" style="margin-top:8px">{{ preview_error }}</div>{% endif %}
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+    <button class="btn hivis" type="submit" name="action" value="save">Save wording</button>
+    {% if not is_default %}<button class="btn ghost" type="submit" name="action" value="reset" onclick="return confirm('Go back to the standard wording?')">Reset to standard</button>{% endif %}
+  </div>
+</form>
+
+<div class="section"><h2>Fill-ins you can use</h2></div>
+<div class="panel">
+  <p class="muted" style="font-size:14px">Type these with the curly braces; the app swaps in the real thing for each lead. If something isn't known for a lead (no job type, say) it's left out and the sentence tidies itself up.</p>
+  <dl class="kv words">
+    {% for k, v in placeholders.items() %}<dt><code>{{ '{' ~ k ~ '}' }}</code></dt><dd>{{ v }}</dd>{% endfor %}
+  </dl>
+</div>
+
+<div class="section"><h2>Good to know</h2></div>
+<div class="panel">
+  <ul class="muted" style="margin:0;padding-left:20px;font-size:14px;line-height:1.6">
+    <li>Only the <em>first</em> text to a lead is pre-filled. Once anyone on your team has texted them, the button opens blank so you don't repeat yourself.</li>
+    <li>Everyone on your team gets the same wording, signed with their own name.</li>
+    <li>The automatic acknowledgement a lead gets the moment their form arrives, and appointment confirmations, are set up by {{ settings.agency_name }}. Ask them if you'd like those changed too.</li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  var vals = {{ sample_values | tojson }};
+  var ta = document.getElementById('template'), out = document.getElementById('preview'), count = document.getElementById('count');
+  var fallback = {{ default_template | tojson }};
+  function render(t) {
+    var s = (t || fallback).replace(/\{(\w+)\}/g, function (m, k) { return k in vals ? vals[k] : ''; });
+    s = s.replace(/\s+([,.!?])/g, '$1').replace(/ {2,}/g, ' ').trim();
+    return s;
+  }
+  ta.addEventListener('input', function () { out.textContent = render(ta.value); count.textContent = ta.value.length; });
+})();
+</script>
+{% endblock %}

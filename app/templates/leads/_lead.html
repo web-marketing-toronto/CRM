@@ -92,7 +92,7 @@
       <span class="act" aria-disabled="true">Email <small>no email</small></span>
       {% endif %}
     </div>
-    <div class="hint">{% if can_text %}Calls and texts go through {{ texting_number | phone }}, so they only ever see the business number; the thread stays here whichever phone you use.{% else %}Tapping logs the attempt and moves a new lead to Contacted.{% endif %}{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
+    <div class="hint">{% if can_text %}Calls and texts go through {{ texting_number | phone }}, so they only ever see the business number; the thread stays here whichever phone you use.{% else %}Tapping logs the attempt and moves a new lead to Contacted.{% endif %}{% if intro %} Text starts with your first-text wording{% if principal.role.value in ('owner', 'agency_admin') %} (<a href="/messages">change it</a>){% endif %}.{% endif %}{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
     {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
     <div class="next-up">
       <span>

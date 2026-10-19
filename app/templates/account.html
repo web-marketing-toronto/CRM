@@ -22,6 +22,13 @@
   </div>
 </div>
 
+{% if principal.tenant and principal.role.value in ('owner', 'agency_admin') %}
+<div class="section"><h2>{{ principal.tenant.name }}</h2></div>
+<div class="panel">
+  <p style="margin:0"><a href="/messages"><strong>Text wording</strong></a> <span class="muted">— what the Text button pre-fills on a new lead. Edit it any time.</span></p>
+</div>
+{% endif %}
+
 <div class="section"><h2>Password</h2></div>
 <form class="panel" method="post" action="/account/password">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

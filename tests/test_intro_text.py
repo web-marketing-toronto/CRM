@@ -74,3 +74,68 @@ def test_relay_strips_the_ref_and_sends_the_intro_to_the_lead(client, make_tenan
     assert len(sent) == 1 and sent[0]["body"].startswith("Hi Karen, thanks") and "A001" not in sent[0]["body"]
     assert sent[0]["from"] == "+12495550100"
     assert admin_conn.execute("SELECT status FROM lead WHERE id = %s", (lead_id,)).fetchone()["status"] == "contacted"
+
+
+def _owner_login(client, make_user, admin_conn, tenant_id, email="dan@ital.test", name="Jeffrey Braun"):
+    import pyotp
+
+    from app.auth import crypto
+
+    u = make_user(email, tenant_id=tenant_id, role="owner", name=name, totp_enabled=True, mobile="+17055550199")
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), u["id"]))
+    client.post("/login", data={"email": email, "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    return u
+
+
+def test_owner_edits_first_text_on_the_messages_page(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("ital", name="Ital Paving", twilio_number="+12495550100")
+    _owner_login(client, make_user, admin_conn, t["id"])
+    lead_id = _lead(client, t)
+
+    page = client.get("/messages")
+    assert page.status_code == 200 and "Text wording" in page.text
+    assert "Hi Karen, thanks for reaching out about your driveway paving." in page.text  # preview on the newest lead
+    assert "Reset to standard" not in page.text  # still on the default
+    csrf = csrf_from(client)
+
+    # A broken placeholder is refused with the draft kept.
+    r = client.post("/messages", data={"template": "Hi {first_name", "csrf_token": csrf})
+    assert r.status_code == 400 and "problem near a {placeholder}" in r.text and "Hi {first_name" in r.text
+
+    r = client.post("/messages", data={"template": "Hey {first_name}, {your_first_name} from {client_name} here. Sealing special on this month. Good time to talk about {job}?", "csrf_token": csrf}, follow_redirects=False)
+    assert r.status_code == 303 and "Saved" in r.headers["location"]
+    saved = admin_conn.execute("SELECT settings->'lead_messaging'->'templates'->>'intro' AS t FROM tenant WHERE id = %s", (t["id"],)).fetchone()["t"]
+    assert saved.startswith("Hey {first_name}")
+    html = client.get(f"/leads/{lead_id}").text
+    assert _sms_body(html) == "A001 Hey Karen, Jeffrey from Ital Paving here. Sealing special on this month. Good time to talk about your driveway paving?"
+    assert 'href="/messages"' in html  # owners get the "change it" link on the lead
+    assert "Reset to standard" in client.get("/messages").text
+
+    r = client.post("/messages", data={"template": "ignored", "action": "reset", "csrf_token": csrf}, follow_redirects=False)
+    assert r.status_code == 303
+    assert admin_conn.execute("SELECT settings->'lead_messaging'->'templates'->>'intro' AS t FROM tenant WHERE id = %s", (t["id"],)).fetchone()["t"] is None
+    assert "Hi Karen, thanks for reaching out" in _sms_body(client.get(f"/leads/{lead_id}").text)
+    assert admin_conn.execute("SELECT count(*) AS n FROM audit WHERE action = 'first_text_updated'").fetchone()["n"] == 2
+
+
+def test_members_cannot_edit_the_wording_and_other_settings_survive(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("ital", name="Ital Paving", twilio_number="+12495550100")
+    admin_conn.execute("UPDATE tenant SET settings = settings || %s WHERE id = %s", (Jsonb({"lead_messaging": {"ack": False, "templates": {"ack": "Custom ack {first_name}"}}, "sms": {"relay_replies": False}}), t["id"]))
+    make_user("pat@ital.test", tenant_id=t["id"], role="member", name="Pat Member")
+    client.post("/login", data={"email": "pat@ital.test", "password": "correct-horse-battery"})
+    assert client.get("/messages").status_code == 403
+    assert 'href="/messages"' not in client.get("/account").text
+
+    fresh = client.__class__(client.app, base_url="http://testserver")
+    with fresh:
+        _owner_login(fresh, make_user, admin_conn, t["id"])
+        csrf = csrf_from(fresh)
+        r = fresh.post("/messages", data={"template": "Hi {first_name}, new wording.", "csrf_token": csrf}, follow_redirects=False)
+        assert r.status_code == 303
+    s = admin_conn.execute("SELECT settings FROM tenant WHERE id = %s", (t["id"],)).fetchone()["settings"]
+    assert s["lead_messaging"]["templates"] == {"ack": "Custom ack {first_name}", "intro": "Hi {first_name}, new wording."}
+    assert s["lead_messaging"]["ack"] is False and s["sms"] == {"relay_replies": False}

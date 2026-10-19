@@ -294,6 +294,7 @@ table.data .name { font-weight: 700; color: var(--ink); font-size: 15px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 14px; }
 .kv dt { color: var(--ink-2); }
 .kv dd { margin: 0; word-break: break-all; }
+.kv.words dd { word-break: normal; }
 pre.snippet { background: var(--ink); color: #e8ecf1; padding: 14px; border-radius: var(--radius); font-size: 12.5px; overflow-x: auto; line-height: 1.5; }
 .user-row { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
 .user-row:first-child { border-top: 0; }
@@ -358,3 +359,7 @@ table.data tr.rowlink:hover td { background: var(--signal-soft); }
 .problem .err { color: var(--alert); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; margin: 2px 0 4px; word-break: break-word; }
 .chip.gap { border-color: var(--hivis-deep); background: #fff8d6; color: #6b5300; font-weight: 600; margin: 1px 0; }
 .chip.gap:hover { text-decoration: none; border-color: var(--ink); }
+
+/* ---------- Text wording (client-editable first text) ---------- */
+.preview-box { margin-top: 4px; padding: 12px 14px; background: var(--paper); border-radius: var(--radius); }
+.bubble { display: inline-block; max-width: 92%; padding: 10px 14px; background: var(--signal); color: #fff; border-radius: 18px 18px 4px 18px; font-size: 15px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
