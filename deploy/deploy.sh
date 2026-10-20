@@ -16,6 +16,17 @@ SA="crm-run@${PROJECT}.iam.gserviceaccount.com"
 
 # First deploy has no URL yet; deploy once, read the URL, then redeploy with BASE_URL set.
 EXISTING_URL="$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)' 2>/dev/null || true)"
+# A custom domain set once (BASE_URL=https://… bash deploy/deploy.sh) is remembered from the running service,
+# so later deploys don't fall back to the run.app address.
+if [[ -z "$BASE_URL" ]]; then
+  BASE_URL="$(gcloud run services describe "$SERVICE" --region="$REGION" --format=json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    envs = json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0].get("env", [])
+    print(next((e.get("value", "") for e in envs if e.get("name") == "BASE_URL" and "run.app" not in e.get("value", "")), ""))
+except Exception:
+    print("")' 2>/dev/null || true)"
+fi
 URL="${BASE_URL:-${EXISTING_URL:-https://placeholder.invalid}}"
 
 # Optional secrets: each one that exists in Secret Manager is wired to its environment variable.

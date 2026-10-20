@@ -75,7 +75,7 @@ def lead_list(request: Request, principal: Annotated[Principal, Depends(require_
         like = f"%{q}%"
         params += [like, like, like, like, like, like]
 
-    order = "l.created_at ASC" if view == "needs_action" else "l.created_at DESC"
+    order = "l.created_at DESC"  # newest first everywhere; escalations cover anything old that is still untouched
     sql = f"""
         SELECT l.*, u.name AS assignee_name,
                {NEEDS_ACTION_SQL} AS needs_action

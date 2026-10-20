@@ -290,11 +290,24 @@ The tick logs one line a minute with counts of reminders sent, digests, conversi
 job. `SMS to ...` / `EMAIL to ...` lines appear when a provider is not configured (the `log` provider), which
 is how you can see what would have gone out before Twilio or Postmark is wired.
 
-## 7. Optional: custom domain
+## 7. Custom domain (a clean URL for clients)
 
-Cloud Run → Domain mappings → map `crm.web-marketing-toronto.com` (or similar) to the `crm` service,
-add the DNS records it shows, then redeploy with `BASE_URL=https://crm.web-marketing-toronto.com bash deploy/deploy.sh`
-so intake URLs and emails use the real domain.
+Cloud Run's own domain mapping is not offered in the Toronto region, so the domain goes through
+**Firebase Hosting**, which sits in front of the service for free with a Google-managed certificate.
+`deploy/hosting/` holds the config (every path is rewritten to the `crm` service).
+
+1. Add Firebase to the project once: https://console.firebase.google.com → *Add project* → pick the
+   existing `wmt-crm` project (no Analytics needed).
+2. On the VM: `npm install -g firebase-tools && firebase login --no-localhost`, then
+   `cd ~/crm/deploy/hosting && firebase deploy --only hosting`. The site is now at
+   `https://wmt-crm.web.app`, already serving the CRM.
+3. Firebase console → Hosting → *Add custom domain* → e.g. `app.yourproduct.com` or
+   `crm.web-marketing-toronto.com` → add the TXT record it shows (ownership), then the two A records, at
+   your DNS host. The certificate is issued within an hour or so of the records going live.
+4. Tell the CRM its address, once: `cd ~/crm && BASE_URL=https://app.yourproduct.com EMAIL_FROM=… bash deploy/deploy.sh`.
+   Later deploys remember it. Every link the CRM sends (alerts, one-tap actions, password resets),
+   the intake URLs, the snippet URL and the Twilio/CallRail webhook URLs now use the domain, so update
+   the two Twilio webhooks and CallRail to the new address (the old run.app URLs keep working too).
 
 ## Day-to-day
 

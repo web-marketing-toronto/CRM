@@ -308,3 +308,15 @@ def test_forgot_password_flow_and_cli_reset(client, make_tenant, make_user, admi
     assert client.post("/login", data={"email": "dan@alpha.test", "password": "cli-set-password-7"}, follow_redirects=False).status_code == 303
     assert cli.main(["set-password", "--email", "ghost@alpha.test", "--password", "whatever-whatever"]) == 1
     dbmod.init_pool(__import__("tests.conftest", fromlist=["APP_URL"]).APP_URL)
+
+
+def test_lead_list_is_newest_first_in_every_view(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("alpha")
+    make_user("dan@alpha.test", tenant_id=t["id"])
+    first = _intake(client, t, name="Older Lead", phone="7055550021")
+    _intake(client, t, name="Newer Lead", phone="7055550022")
+    admin_conn.execute("UPDATE lead SET created_at = created_at - interval '2 days' WHERE id = %s", (first["lead_id"],))
+    client.post("/login", data={"email": "dan@alpha.test", "password": "correct-horse-battery"})
+    for view in ("needs_action", "all", "new"):
+        html = client.get(f"/leads?view={view}").text
+        assert html.index("Newer Lead") < html.index("Older Lead"), view

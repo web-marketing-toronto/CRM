@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": ["firebase.json", "**/.*"],
+    "rewrites": [
+      { "source": "**", "run": { "serviceId": "crm", "region": "northamerica-northeast2" } }
+    ],
+    "headers": [
+      { "source": "/static/**", "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }] }
+    ]
+  }
+}
