@@ -75,6 +75,10 @@ def _hm(text: str, default: time) -> time:
         return default
 
 
+def in_business_hours(dt: datetime, tenant: dict) -> bool:
+    return next_business_time(dt, tenant) == dt
+
+
 def next_business_time(dt: datetime, tenant: dict) -> datetime:
     """`dt` if it falls inside business hours on a working day, else the start of the next window."""
     hours = tenant.get("business_hours") or {}

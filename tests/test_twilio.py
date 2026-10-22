@@ -1,5 +1,7 @@
 """Twilio webhooks: signature checks, reply codes, lead replies, STOP, and new leads by text."""
 
+import re
+
 from app.routers.twilio import twilio_signature
 
 TOKEN = "test-twilio-token"
@@ -144,13 +146,13 @@ def test_calls_to_the_texting_number_ring_the_client(client, make_tenant, make_u
     outbox.clear()
     params = {"From": "+17055550142", "To": "+17055550000", "CallSid": "CA1", "CallStatus": "ringing"}
     r = client.post("/v1/twilio/voice", data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", params, TOKEN)})
-    assert r.status_code == 200 and '<Dial callerId="+17055550142" timeout="25">+17055551000</Dial>' in r.text
+    assert r.status_code == 200 and '<Dial callerId="+17055550142" timeout="25"><Number>+17055551000</Number></Dial>' in r.text
     assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'lead_replied'", (lead_id,)).fetchone()["n"] == 1
     assert not [m for m in outbox.sms if m["to"] == "+17055551000"]  # their phone rang; no extra alert
     # An explicit forwarding number wins over the owner's mobile.
     admin_conn.execute("""UPDATE tenant SET settings = settings || '{"sms": {"forward_calls_to": "+17055559000"}}' WHERE id = %s""", (t["id"],))
     r = client.post("/v1/twilio/voice", data=params, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", params, TOKEN)})
-    assert ">+17055559000</Dial>" in r.text
+    assert "<Number>+17055559000</Number></Dial>" in r.text
     # Unknown number: a polite message, no crash.
     p2 = {"From": "+16475550000", "To": "+17055558888", "CallSid": "CA2"}
     r = client.post("/v1/twilio/voice", data=p2, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", p2, TOKEN)})
@@ -195,3 +197,47 @@ def test_alerts_point_at_the_app_not_the_raw_number_when_the_client_has_a_busine
     client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"})
     alert = next(m for m in outbox.sms if m["to"] == "+17055551000")
     assert "Call or text from http://testserver/leads/" in alert["body"] and "(705) 555-0142" not in alert["body"]
+
+
+def test_office_line_rings_with_the_mobile_or_in_turn(client, make_tenant, make_user, admin_conn, outbox):
+    from psycopg.types.json import Jsonb
+
+    t, owner = _setup(make_tenant, make_user, admin_conn)
+    # 24/7 hours so the office line is "open" whenever the test runs.
+    admin_conn.execute("UPDATE tenant SET business_hours = %s WHERE id = %s", (Jsonb({"start": "00:00", "end": "23:59", "days": [1, 2, 3, 4, 5, 6, 7]}), t["id"]))
+    params = {"From": "+17055550142", "To": "+17055550000", "CallSid": "CA3", "CallStatus": "ringing"}
+
+    def voice(p=params):
+        return client.post("/v1/twilio/voice", data=p, headers={"X-Twilio-Signature": twilio_signature("http://testserver/v1/twilio/voice", p, TOKEN)}).text
+
+    # Both at once: one Dial, two numbers, office first in the list, then the missed-call message.
+    admin_conn.execute("UPDATE tenant SET settings = settings || %s WHERE id = %s", (Jsonb({"sms": {"office_line": "+17055558000", "ring": "both"}}), t["id"]))
+    html = voice()
+    assert '<Dial callerId="+17055550142" timeout="25"><Number>+17055558000</Number><Number>+17055551000</Number></Dial><Say' in html
+
+    # Office first: a short Dial to the office with an action URL; the next leg rings the mobile only if nobody answered.
+    admin_conn.execute("UPDATE tenant SET settings = settings || %s WHERE id = %s", (Jsonb({"sms": {"office_line": "+17055558000", "ring": "office_first"}}), t["id"]))
+    html = voice()
+    m = re.search(r'<Dial callerId="\+17055550142" timeout="18" action="http://testserver(/v1/twilio/voice/next/[^"]+)" method="POST"><Number>\+17055558000</Number></Dial>', html)
+    assert m and "<Say" not in html
+    nxt = m.group(1)
+    p2 = {"DialCallStatus": "no-answer", "CallSid": "CA3"}
+    r = client.post(nxt, data=p2, headers={"X-Twilio-Signature": twilio_signature(f"http://testserver{nxt}", p2, TOKEN)})
+    assert r.status_code == 200 and "<Number>+17055551000</Number>" in r.text and 'action="http://testserver/v1/twilio/voice/next/' in r.text
+    m2 = re.search(r'action="http://testserver(/v1/twilio/voice/next/[^"]+)"', r.text)
+    p3 = {"DialCallStatus": "busy", "CallSid": "CA3"}
+    r = client.post(m2.group(1), data=p3, headers={"X-Twilio-Signature": twilio_signature(f"http://testserver{m2.group(1)}", p3, TOKEN)})
+    assert "<Dial" not in r.text and "we missed you" in r.text
+    # If the office answered and the call ended, the mobile is never rung.
+    p4 = {"DialCallStatus": "completed", "CallSid": "CA3"}
+    r = client.post(nxt, data=p4, headers={"X-Twilio-Signature": twilio_signature(f"http://testserver{nxt}", p4, TOKEN)})
+    assert "<Hangup/>" in r.text and "<Dial" not in r.text
+
+    # Mobile first reverses the order; after hours (office_hours_only) the office drops out entirely.
+    admin_conn.execute("UPDATE tenant SET settings = settings || %s WHERE id = %s", (Jsonb({"sms": {"office_line": "+17055558000", "ring": "mobile_first"}}), t["id"]))
+    assert "<Number>+17055551000</Number></Dial>" in voice() and "+17055558000" not in voice().split("</Dial>")[0]
+    admin_conn.execute("UPDATE tenant SET business_hours = %s, settings = settings || %s WHERE id = %s", (Jsonb({"start": "09:00", "end": "09:01", "days": [1]}), Jsonb({"sms": {"office_line": "+17055558000", "ring": "both", "office_hours_only": True}}), t["id"]))
+    html = voice()
+    assert "+17055558000" not in html and "<Number>+17055551000</Number>" in html
+    admin_conn.execute("UPDATE tenant SET settings = settings || %s WHERE id = %s", (Jsonb({"sms": {"office_line": "+17055558000", "ring": "both", "office_hours_only": False}}), t["id"]))
+    assert "<Number>+17055558000</Number><Number>+17055551000</Number>" in voice()

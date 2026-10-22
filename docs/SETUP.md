@@ -334,6 +334,11 @@ Cloud Run's own domain mapping is not offered in the Toronto region, so the doma
   the platform's reason; *Retry now* re-queues it. Settings → *Recent uploads* lists the last ten per client.
 - **Someone texts STOP**: recorded on the lead; the CRM never texts that number for that client again
   unless they text START.
+- **A client has an office line and a mobile**: client settings → *Office main line* and *Mobile / direct line*
+  (blank mobile = the owner's). Calls to their texting number ring both at once (first to answer takes it),
+  or office first then mobile, or mobile first; "only ring the office during business hours" sends after-hours
+  calls straight to the mobile. An office voicemail answering counts as answered, so "office first" suits
+  offices with someone at the desk.
 - **Change a client's reminder timings or message wording**: all on their settings page; takes effect for the
   next lead. The follow-up schedule applies to leads already in the cadence at their next touch. The same
   section holds the **First text**: what the Text button on a lead pre-fills the first time anyone texts

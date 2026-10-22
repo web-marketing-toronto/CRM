@@ -68,7 +68,7 @@
       <summary style="cursor:pointer;font-weight:600;font-size:14px">Texting number (Twilio)</summary>
       <p style="margin-top:10px;font-size:14px">On the client's Twilio number, under Voice &amp; Fax and Messaging, point both webhooks at the CRM (HTTP POST):</p>
       <dl class="kv"><dt>A message comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/sms</code></dd><dt>A call comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/voice</code></dd></dl>
-      <p style="font-size:14px">Texts from leads land on the lead and are relayed to the assignee's phone from this number; whatever the assignee texts back goes to the lead. Calls to the number ring the forwarding number below (or the owner's mobile) showing the caller's own number, and are logged on the lead.</p>
+      <p style="font-size:14px">Texts from leads land on the lead and are relayed to the assignee's phone from this number; whatever the assignee texts back goes to the lead. Calls to the number ring the office line and/or the mobile set under Settings (or the owner's mobile), showing the caller's own number, and are logged on the lead.</p>
     </details>
     <details style="margin-top:8px">
       <summary style="cursor:pointer;font-weight:600;font-size:14px">CallRail</summary>
@@ -134,9 +134,20 @@
       <div class="field"><label for="default_assignee_id">New leads go to</label>
         <select id="default_assignee_id" name="default_assignee_id"><option value="">Nobody (unassigned)</option>{% for u in users if u.is_active %}<option value="{{ u.id }}" {{ 'selected' if tenant.default_assignee_id == u.id else '' }}>{{ u.name }}</option>{% endfor %}</select></div>
       <div class="field"><label for="twilio_number">Their texting number <span class="dim">(Twilio; blank = agency number)</span></label><input id="twilio_number" name="twilio_number" type="tel" value="{{ tenant.twilio_number or '' }}"></div>
-      <div class="field"><label for="forward_calls_to">Calls to the texting number ring <span class="dim">(blank = owner's mobile)</span></label><input id="forward_calls_to" name="forward_calls_to" type="tel" value="{{ sms_cfg.forward_calls_to | phone if sms_cfg.forward_calls_to else '' }}" placeholder="705 555 0100"></div>
+      <div class="field"><label for="office_line">Office main line <span class="dim">(rings for calls to the texting number; blank = none)</span></label><input id="office_line" name="office_line" type="tel" value="{{ sms_cfg.office_line | phone if sms_cfg.office_line else '' }}" placeholder="705 555 0100"></div>
+      <div class="field"><label for="forward_calls_to">Mobile / direct line <span class="dim">(blank = owner's mobile)</span></label><input id="forward_calls_to" name="forward_calls_to" type="tel" value="{{ sms_cfg.forward_calls_to | phone if sms_cfg.forward_calls_to else '' }}" placeholder="705 555 0199"></div>
       <div class="field"><label for="meta_page_id">Meta Page id <span class="dim">(for lead ads)</span></label><input id="meta_page_id" name="meta_page_id" type="text" inputmode="numeric" value="{{ meta_page_id }}" placeholder="1234567890"></div>
       <div class="field"><label for="call_min_seconds">Answered call counts as a lead from <span class="dim">(seconds)</span></label><input id="call_min_seconds" name="call_min_seconds" type="text" inputmode="numeric" value="{{ call_min_seconds }}"></div>
+    </div>
+    <div class="field" style="margin-top:-4px">
+      <label>When a lead calls the texting number</label>
+      <div class="days">
+        <label class="day"><input type="radio" name="ring" value="both" {{ 'checked' if sms_cfg.ring == 'both' else '' }}> Ring office and mobile together; first to answer takes it</label>
+        <label class="day"><input type="radio" name="ring" value="office_first" {{ 'checked' if sms_cfg.ring == 'office_first' else '' }}> Office first, then mobile</label>
+        <label class="day"><input type="radio" name="ring" value="mobile_first" {{ 'checked' if sms_cfg.ring == 'mobile_first' else '' }}> Mobile first, then office</label>
+      </div>
+      <label class="check" style="min-height:36px"><input type="checkbox" name="office_hours_only" {{ 'checked' if sms_cfg.office_hours_only else '' }}> Only ring the office during business hours <span class="dim">(after hours, straight to the mobile)</span></label>
+      <div class="help">The lead always sees the business number; whoever answers sees the lead's own number. If an office voicemail picks up, that counts as answered, so "office first" works best when someone is there.</div>
     </div>
     <label class="check" style="margin:-6px 0 10px"><input type="checkbox" name="relay_replies" {{ 'checked' if sms_cfg.relay_replies else '' }}> Relay lead texts to the assignee's phone from the texting number, so they can answer from their phone <span class="dim">(off = alerts only; answer from the app)</span></label>
     <div class="field"><label for="job_types">Job types <span class="dim">(one per line; shows as a dropdown)</span></label><textarea id="job_types" name="job_types" style="min-height:90px">{{ job_types_text }}</textarea></div>

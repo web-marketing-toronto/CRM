@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import logging
 import re
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
@@ -175,35 +176,100 @@ def _xml(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def forward_number(conn, tenant: dict) -> str | None:
-    """Where calls to the client's texting number ring: the setting, else the first owner's mobile."""
+RING_MODES = ("both", "office_first", "mobile_first")
+OFFICE_RING_SECONDS = 18   # long enough for a receptionist, short enough that a lead doesn't give up
+MOBILE_RING_SECONDS = 25
+
+
+def forward_targets(conn, tenant: dict, *, now: datetime | None = None) -> tuple[list[str], str]:
+    """Where calls to the client's texting number ring: (numbers in order, ring mode).
+    The office line only rings inside business hours when that option is on; the mobile is the explicit
+    forwarding number, else the first owner's mobile."""
     cfg = (tenant.get("settings") or {}).get("sms") or {}
-    if cfg.get("forward_calls_to"):
-        return cfg["forward_calls_to"]
-    row = conn.execute("SELECT mobile_e164 FROM app_user WHERE tenant_id = %s AND role = 'owner' AND is_active AND mobile_e164 IS NOT NULL ORDER BY created_at LIMIT 1", (tenant["id"],)).fetchone()
-    return row["mobile_e164"] if row else None
+    mobile = cfg.get("forward_calls_to") or ""
+    if not mobile:
+        row = conn.execute("SELECT mobile_e164 FROM app_user WHERE tenant_id = %s AND role = 'owner' AND is_active AND mobile_e164 IS NOT NULL ORDER BY created_at LIMIT 1", (tenant["id"],)).fetchone()
+        mobile = row["mobile_e164"] if row else ""
+    office = cfg.get("office_line") or ""
+    if office and cfg.get("office_hours_only", True) and not followup.in_business_hours(now or datetime.now(UTC), tenant):
+        office = ""
+    mode = cfg.get("ring") if cfg.get("ring") in RING_MODES else "both"
+    order = [mobile, office] if mode == "mobile_first" else [office, mobile]
+    targets = [n for n in dict.fromkeys(order) if n]
+    return targets, mode
+
+
+def forward_number(conn, tenant: dict) -> str | None:
+    """Backwards-compatible single target: the first number that would ring."""
+    targets, _ = forward_targets(conn, tenant)
+    return targets[0] if targets else None
+
+
+def _dial(from_: str, numbers: list[str], *, timeout: int, action: str | None = None) -> str:
+    inner = "".join(f"<Number>{_xml(n)}</Number>" for n in numbers)
+    act = f' action="{_xml(action)}" method="POST"' if action else ""
+    return f'<Dial callerId="{_xml(from_)}" timeout="{timeout}"{act}>{inner}</Dial>'
+
+
+def _missed(tenant_name: str) -> str:
+    return f'<Say voice="alice">Sorry, we missed you. Please text this number and {_xml(tenant_name)} will get right back to you.</Say>'
+
+
+def _ring_plan(from_: str, targets: list[str], mode: str, tenant_name: str) -> str:
+    """TwiML for the first leg. Simultaneous: one Dial with every number. In turn: dial the first with an
+    action URL that decides whether to try the next."""
+    s = get_settings()
+    if mode == "both" or len(targets) == 1:
+        return _dial(from_, targets, timeout=MOBILE_RING_SECONDS) + _missed(tenant_name)
+    from app.auth import crypto
+
+    token = crypto.signed_token({"f": from_, "t": targets[1:], "n": tenant_name}, salt="voicenext")
+    first_timeout = OFFICE_RING_SECONDS if mode == "office_first" else MOBILE_RING_SECONDS
+    return _dial(from_, targets[:1], timeout=first_timeout, action=f"{s.base_url}/v1/twilio/voice/next/{token}")
 
 
 @router.post("/voice")
 async def inbound_call(request: Request):
-    """A lead calls the client's texting number back: ring the client's phone, showing the lead's number."""
+    """A lead calls the client's texting number back: ring the office and/or the mobile, showing the lead's number."""
     params = await _verified_form(request)
     from_ = normalize_phone(params.get("From", "")) or params.get("From", "")
     to = normalize_phone(params.get("To", "")) or params.get("To", "")
     with system_db() as conn:
         tenant = conn.execute("SELECT * FROM tenant WHERE twilio_number = %s AND is_active", (to,)).fetchone() if to else None
-        target = forward_number(conn, tenant) if tenant else None
-        if tenant is None or not target:
+        targets, mode = forward_targets(conn, tenant) if tenant else ([], "both")
+        if tenant is None or not targets:
             body = '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">Sorry, this number cannot take calls right now. Please text us instead.</Say></Response>'
             return Response(content=body, media_type="application/xml")
         lead = conn.execute("SELECT * FROM lead WHERE tenant_id = %s AND phone_e164 = %s ORDER BY created_at DESC LIMIT 1", (tenant["id"], from_)).fetchone()
         if lead is not None:
-            followup.on_lead_replied(conn, tenant, lead, f"Called the texting number; forwarded to {format_phone_display(target)}", alert=False)
+            where = " and ".join(format_phone_display(n) for n in targets)
+            followup.on_lead_replied(conn, tenant, lead, f"Called the texting number; forwarded to {where}", alert=False)
+    body = '<?xml version="1.0" encoding="UTF-8"?><Response>' + _ring_plan(from_, targets, mode, tenant["name"]) + "</Response>"
+    return Response(content=body, media_type="application/xml")
+
+
+@router.post("/voice/next/{token}")
+async def inbound_call_next(request: Request, token: str):
+    """After a sequential Dial: if nobody answered, ring the next number; if it was answered and has ended,
+    hang up rather than ringing someone else."""
+    from app.auth import crypto
+
+    params = await _verified_form(request)
+    data = crypto.read_signed_token(token, salt="voicenext", max_age_seconds=600)
+    if not data:
+        return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="application/xml")
+    status = (params.get("DialCallStatus") or "").lower()
+    if status in ("completed", "answered"):
+        return Response(content='<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>', media_type="application/xml")
+    remaining = list(data.get("t") or [])
+    if not remaining:
+        body = '<?xml version="1.0" encoding="UTF-8"?><Response>' + _missed(data.get("n", "")) + "</Response>"
+        return Response(content=body, media_type="application/xml")
+    nxt = crypto.signed_token({"f": data["f"], "t": remaining[1:], "n": data.get("n", "")}, salt="voicenext")
     body = (
         '<?xml version="1.0" encoding="UTF-8"?><Response>'
-        f'<Dial callerId="{_xml(from_)}" timeout="25">{_xml(target)}</Dial>'
-        f'<Say voice="alice">Sorry, we missed you. Please text this number and {_xml(tenant["name"])} will get right back to you.</Say>'
-        "</Response>"
+        + _dial(data["f"], remaining[:1], timeout=MOBILE_RING_SECONDS, action=f"{get_settings().base_url}/v1/twilio/voice/next/{nxt}")
+        + "</Response>"
     )
     return Response(content=body, media_type="application/xml")
 
