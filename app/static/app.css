@@ -138,18 +138,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .ticket .message { background: var(--paper); padding: 12px 16px; font-size: 15px; white-space: pre-wrap; }
 .ticket .message .label { font-size: 12px; font-weight: 700; color: var(--ink-2); margin-bottom: 4px; }
 
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 button.act { font: inherit; cursor: pointer; width: 100%; }
 .actions .act {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  min-height: 76px; padding: 14px 8px; border-radius: var(--radius); border: 0; cursor: pointer;
+  min-height: 76px; padding: 14px 6px; border-radius: var(--radius); border: 0; cursor: pointer;
   background: var(--hivis); color: var(--ink); font-weight: 700; font-size: 15px; text-decoration: none;
   box-shadow: inset 0 -3px 0 rgba(22, 32, 43, 0.18);
 }
 .actions .act:hover { background: var(--hivis-deep); text-decoration: none; }
 .actions .act:active { transform: translateY(1px); box-shadow: inset 0 -1px 0 rgba(22, 32, 43, 0.18); }
 .actions .act svg { width: 22px; height: 22px; }
-.actions .act small { font-size: 13px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.actions .act small { font-size: 12px; font-weight: 600; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.actions .act { min-width: 0; }
 .actions .act[aria-disabled="true"] { background: var(--muted-soft); color: var(--ink-3); box-shadow: none; cursor: default; }
 .actions .act[aria-disabled="true"] small { color: var(--ink-3); }
 .hint { font-size: 13px; color: var(--ink-2); margin-top: 8px; }

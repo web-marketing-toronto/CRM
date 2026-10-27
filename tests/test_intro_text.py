@@ -166,7 +166,7 @@ def test_email_button_offers_a_choice_then_remembers_it(client, make_tenant, mak
     html = client.get(f"/leads/{lead_id}").text
     assert '<details class="act-menu">' not in html
     assert re.search(r'<a class="act" href="https://mail\.google\.com/[^"]+" target="_blank" rel="noopener" data-touch="email">', html)
-    assert "Gmail · karen@example.com" in html
+    assert "Email <small>Gmail</small>" in html
     # The Account page shows the choice and an unknown value falls back to asking.
     assert 'value="gmail" checked' in client.get("/account").text
     client.post("/account/email-client", data={"email_client": "pigeon", "csrf_token": csrf}, follow_redirects=False)
