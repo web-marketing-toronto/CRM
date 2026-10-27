@@ -87,7 +87,7 @@
       var tick = function () { update(el, wrap); };
       el.addEventListener('scroll', tick, { passive: true }); window.addEventListener('resize', tick);
       if (window.ResizeObserver) new ResizeObserver(tick).observe(el);
-      var cur = el.querySelector('.current');  // keep the current page's link on screen in a nav that scrolls
+      var cur = el.querySelector('.current, .on, [aria-current]');  // keep the selected link or filter on screen in a row that scrolls
       if (cur && el.scrollWidth > el.clientWidth) { el.scrollLeft = Math.max(0, cur.offsetLeft - (el.clientWidth - cur.offsetWidth) / 2); }
       tick();
     }
