@@ -289,17 +289,17 @@ input.otp { font-size: 26px; letter-spacing: 0.3em; text-align: center; min-heig
   position: absolute; top: 1px; bottom: 1px; width: 64px; display: flex; align-items: center; pointer-events: none;
   opacity: 0; transition: opacity 0.15s;
 }
-.scroller > .scroll-cue.right { right: 1px; justify-content: flex-end; padding-right: 8px; border-radius: 0 var(--radius) var(--radius) 0; background: linear-gradient(to right, rgba(255, 255, 255, 0), var(--card) 65%); }
-.scroller > .scroll-cue.left { left: 1px; justify-content: flex-start; padding-left: 8px; border-radius: var(--radius) 0 0 var(--radius); background: linear-gradient(to left, rgba(255, 255, 255, 0), var(--card) 65%); }
+.scroller > .scroll-cue.right { right: 1px; justify-content: flex-end; padding-right: 8px; border-radius: 0 var(--radius) var(--radius) 0; background: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.85) 65%); }
+.scroller > .scroll-cue.left { left: 1px; justify-content: flex-start; padding-left: 8px; border-radius: var(--radius) 0 0 var(--radius); background: linear-gradient(to left, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.85) 65%); }
 .scroller.is-tabs > .scroll-cue { top: 0; bottom: 10px; }
 .scroller.is-tabs > .scroll-cue.right { right: 0; }
 .scroller.is-tabs > .scroll-cue.left { left: 0; }
-.scroller.is-tabs > .scroll-cue.right { background: linear-gradient(to right, rgba(238, 240, 236, 0), var(--paper) 65%); }
-.scroller.is-tabs > .scroll-cue.left { background: linear-gradient(to left, rgba(238, 240, 236, 0), var(--paper) 65%); }
+.scroller.is-tabs > .scroll-cue.right { background: linear-gradient(to right, rgba(238, 240, 236, 0), rgba(238, 240, 236, 0.85) 65%); }
+.scroller.is-tabs > .scroll-cue.left { background: linear-gradient(to left, rgba(238, 240, 236, 0), rgba(238, 240, 236, 0.85) 65%); }
 .scroller.more-right > .scroll-cue.right, .scroller.more-left > .scroll-cue.left { opacity: 1; }
 .scroller.more-right > .scroll-cue.right button, .scroller.more-left > .scroll-cue.left button { pointer-events: auto; }
 .scroll-cue button {
-  width: 32px; height: 32px; border-radius: 50%; border: 0; cursor: pointer; background: var(--ink); color: var(--hivis);
+  width: 32px; height: 32px; border-radius: 50%; border: 0; cursor: pointer; background: rgba(22, 32, 43, 0.72); color: var(--hivis);
   display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(22, 32, 43, 0.35); padding: 0;
 }
 .scroll-cue button svg { width: 18px; height: 18px; }
