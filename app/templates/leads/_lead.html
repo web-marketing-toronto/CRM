@@ -269,7 +269,18 @@
   <div><a class="btn ghost small" href="{{ source.raw_payload.recording_player or source.raw_payload.recording }}" target="_blank" rel="noopener">Listen to the call{% if source.raw_payload.call_summary %} ({{ source.raw_payload.call_summary | lower }}){% endif %}</a></div>
   {% endif %}
 
-  {% if source and (source.utm_campaign or source.gclid or source.meta_lead_id or source.landing_page or source.callrail_call_id) %}
+  {% if creative %}
+  {% set strip_tag = 'a' if creative.link_url else 'div' %}
+  <{{ strip_tag }} class="ad-strip"{% if creative.link_url %} href="{{ creative.link_url }}" target="_blank" rel="noopener"{% endif %}>
+    {% if creative.has_thumb %}<img class="ad-thumb" src="/ads/{{ source.platform }}/{{ source.ad_id }}/thumb" alt="" width="48" height="48">{% else %}<div class="ad-thumb ad-thumb-none" aria-hidden="true">{{ 'G' if source.platform == 'google_ads' else 'M' }}</div>{% endif %}
+    <div class="ad-text">
+      <div class="ad-name">{{ creative.name or ((creative.headline or '').split(' | ')[0] or ('Ad ' ~ source.ad_id)) }}</div>
+      <div class="ad-where">Came from this {{ 'Google' if source.platform == 'google_ads' else 'Meta' }} ad{% if creative.campaign_name %} · {{ creative.campaign_name }}{% endif %}{% if creative.adset_name %} · {{ creative.adset_name }}{% endif %}{% if creative.link_url %} · view ↗{% endif %}</div>
+    </div>
+  </{{ strip_tag }}>
+  {% endif %}
+
+  {% if source and (source.utm_campaign or source.gclid or source.meta_lead_id or source.landing_page or source.callrail_call_id or source.ad_id) %}
   <details>
     <summary class="muted" style="cursor:pointer;font-size:14px">Where this lead came from</summary>
     <dl class="kv" style="margin-top:10px">
@@ -277,6 +288,7 @@
       {% if source.utm_source %}<dt>Source</dt><dd>{{ source.utm_source }}{% if source.utm_medium %} / {{ source.utm_medium }}{% endif %}</dd>{% endif %}
       {% if source.utm_campaign %}<dt>Campaign</dt><dd>{{ source.utm_campaign }}</dd>{% endif %}
       {% if source.gclid %}<dt>Google click</dt><dd>yes</dd>{% endif %}
+      {% if source.ad_id %}<dt>Ad id</dt><dd>{{ source.ad_id }}{% if source.adset_id %} <span class="dim">(ad set {{ source.adset_id }})</span>{% endif %}</dd>{% endif %}
       {% if source.meta_lead_id %}<dt>Meta lead</dt><dd>{{ source.meta_lead_id }}</dd>{% endif %}
       {% if source.callrail_call_id %}<dt>CallRail</dt><dd>{{ source.callrail_call_id }}</dd>{% endif %}
       {% if source.form_name %}<dt>Form</dt><dd>{{ source.form_name }}</dd>{% endif %}

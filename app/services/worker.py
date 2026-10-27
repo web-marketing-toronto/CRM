@@ -14,7 +14,7 @@ from uuid import UUID
 from psycopg.types.json import Jsonb
 
 from app.db import system_db
-from app.services import conversions, email_intake, followup
+from app.services import conversions, creatives, email_intake, followup
 
 log = logging.getLogger("crm.worker")
 
@@ -33,6 +33,15 @@ def run_tick(now: datetime | None = None) -> dict:
             nightly = conversions.run_nightly(conn, now=now)
     except Exception:  # noqa: BLE001 - spend is best effort; the next tick after 04:00 tomorrow tries again
         log.exception("nightly spend job failed")
+    ads = None
+    try:
+        with system_db() as conn:
+            ads = creatives.refresh(conn)
+        if ads["looked_up"]:
+            _job_mark("ad_creatives", now, ads)
+    except Exception as exc:  # noqa: BLE001 - describing ads is cosmetic; never let it stop the tick
+        log.exception("ad creative refresh failed")
+        ads = {"error": str(exc)[:300]}
     mail = None
     if email_intake.enabled():
         try:
@@ -45,7 +54,7 @@ def run_tick(now: datetime | None = None) -> dict:
             log.exception("email intake failed")
             mail = {"error": str(exc)[:300]}
             _job_mark("email_intake", now, mail)
-    result = {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests, "conversions": conv, "spend": nightly, "email_intake": mail}
+    result = {"at": now.isoformat(), "sent": stats.sent, "cancelled": stats.cancelled, "escalations": stats.escalations, "digests": digests, "conversions": conv, "spend": nightly, "email_intake": mail, "ads": ads}
     heartbeat(now, result)
     return result
 

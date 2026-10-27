@@ -17,7 +17,7 @@ from app.services import attribution as attr
 from app.services.normalize import normalize_email, normalize_phone
 
 MATCH_WINDOW = timedelta(hours=48)
-CLICK_KEYS = ("gclid", "gbraid", "wbraid", "fbclid", "fbc", "fbp", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "landing_page", "referrer")
+CLICK_KEYS = ("gclid", "gbraid", "wbraid", "fbclid", "fbc", "fbp", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "campaign_id", "adset_id", "ad_id", "landing_page", "referrer")
 
 
 def record(conn: psycopg.Connection, tenant: dict, payload: dict[str, Any], *, ip: str | None, user_agent: str | None) -> int | None:

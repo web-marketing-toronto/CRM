@@ -65,6 +65,16 @@
       <p style="font-size:14px"><strong>Also in GTM, once per site:</strong> the Google tag with user-provided data collection on, and the Meta pixel. That is what lets the CRM's Qualified / Won uploads match leads that have no click id.</p>
     </details>
     <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px">Which ad produced each lead (ad thumbnails on reports)</summary>
+      <p style="margin-top:10px;font-size:14px">Meta lead forms already carry the ad id. For leads that come through the website, the ad id has to be in the landing-page URL; the snippet above picks it up from there. Add it once per campaign:</p>
+      <dl class="kv">
+        <dt>Meta</dt><dd>Ads Manager → the ad → <em>Tracking</em> → <em>URL parameters</em> (or at the campaign level under Build URL parameter):<br><code style="user-select:all">utm_source=facebook&amp;utm_medium=paid_social&amp;utm_campaign={{ '{{campaign.name}}' }}&amp;campaign_id={{ '{{campaign.id}}' }}&amp;adset_id={{ '{{adset.id}}' }}&amp;ad_id={{ '{{ad.id}}' }}</code></dd>
+        <dt>Google Ads</dt><dd>Campaign settings → <em>Additional settings</em> → <em>Campaign URL options</em> → <em>Final URL suffix</em> (or at the account level under Account settings → Tracking):<br><code style="user-select:all">campaign_id={campaignid}&amp;adset_id={adgroupid}&amp;ad_id={creative}</code></dd>
+      </dl>
+      <p style="font-size:14px">The CRM then asks the platform what each ad looks like (name, campaign, ad set, image, a link to the ad) within a minute of the first lead from it, and shows it on the client's Results page, the monthly PDF and the lead itself.{% if not meta_configured %} <strong>Meta needs the server's Meta access token for this (crm-meta-access-token), which isn't set yet.</strong>{% endif %}
+      {% if ad_status.leads_with_ad %} So far: {{ ad_status.leads_with_ad }} lead{{ 's' if ad_status.leads_with_ad != 1 else '' }} with an ad id; {{ ad_status.ok }} ad{{ 's' if ad_status.ok != 1 else '' }} described{% if ad_status.missing %}, {{ ad_status.missing }} not found on the platform{% endif %}{% if ad_status.error %}, <span style="color:var(--alert)">{{ ad_status.error }} failing</span> (retried every few hours; the Dashboard's Pipes panel has the reason){% endif %}.{% else %} No lead has carried an ad id yet.{% endif %}</p>
+    </details>
+    <details style="margin-top:8px">
       <summary style="cursor:pointer;font-weight:600;font-size:14px">Texting number (Twilio)</summary>
       <p style="margin-top:10px;font-size:14px">On the client's Twilio number, under Voice &amp; Fax and Messaging, point both webhooks at the CRM (HTTP POST):</p>
       <dl class="kv"><dt>A message comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/sms</code></dd><dt>A call comes in</dt><dd><code style="user-select:all">{{ settings.base_url }}/v1/twilio/voice</code></dd></dl>

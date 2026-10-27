@@ -210,7 +210,10 @@ def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
                (SELECT max(finished_at) FROM job_run WHERE name = 'spend') AS spend_at,
                (SELECT count(*) FROM conversion_event WHERE status = 'pending') AS conv_pending,
                (SELECT count(*) FROM conversion_event WHERE status = 'failed') AS conv_failed,
-               (SELECT max(sent_at) FROM conversion_event WHERE status = 'sent') AS conv_last_sent
+               (SELECT max(sent_at) FROM conversion_event WHERE status = 'sent') AS conv_last_sent,
+               (SELECT count(*) FROM ad_creative WHERE status = 'ok') AS ads_ok,
+               (SELECT count(*) FROM ad_creative WHERE status = 'error') AS ads_failing,
+               (SELECT error FROM ad_creative WHERE status = 'error' ORDER BY fetched_at DESC NULLS LAST LIMIT 1) AS ads_error
         """,
         {"now": now},
     ).fetchone()

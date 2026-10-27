@@ -118,11 +118,46 @@ class SourceRow:
 
 
 @dataclass
+class AdRow(SourceRow):
+    platform: str = ""
+    ad_id: str = ""
+    creative: dict[str, Any] | None = None  # from ad_creative, when the platform has told us about this ad
+
+    @property
+    def name(self) -> str:
+        c = self.creative or {}
+        return c.get("name") or (c.get("headline") or "").split(" | ")[0].strip() or f"Ad {self.ad_id}"
+
+    @property
+    def tagline(self) -> str | None:
+        """The ad's headline, when it adds something the name and image don't."""
+        c = self.creative or {}
+        h = c.get("headline")
+        return h if h and h != self.name and not c.get("has_thumb") else None
+
+    @property
+    def where(self) -> str:
+        c = self.creative or {}
+        bits = [b for b in (c.get("campaign_name"), c.get("adset_name")) if b]
+        return " · ".join(bits)
+
+    @property
+    def thumb_path(self) -> str | None:
+        return f"/ads/{self.platform}/{self.ad_id}/thumb" if (self.creative or {}).get("has_thumb") else None
+
+    @property
+    def link_url(self) -> str | None:
+        return (self.creative or {}).get("link_url")
+
+
+@dataclass
 class Summary:
     period: Period
     by_platform: list[SourceRow] = field(default_factory=list)
     by_channel: list[SourceRow] = field(default_factory=list)
     by_campaign: list[SourceRow] = field(default_factory=list)
+    by_ad: list[AdRow] = field(default_factory=list)
+    ads_unattributed: int = 0  # paid leads in the period that carried no ad id
     total: SourceRow = field(default_factory=lambda: SourceRow("total", "All sources"))
     speed_median_min: float | None = None
     speed_within_hour_pct: float | None = None
@@ -240,6 +275,31 @@ def tenant_summary(conn: psycopg.Connection, tenant: dict, p: Period, *, now: da
         if row.spend is None:
             row.spend = 0.0
     s.by_campaign = sorted(by_key.values(), key=lambda x: (-(x.spend or 0), -x.leads))
+
+    # Ads: paid leads by the ad that produced them (first-touch ad id), described from ad_creative when we have it.
+    ad_rows = conn.execute(
+        f"""
+        WITH first_src AS (SELECT DISTINCT ON (lead_id) lead_id, ad_id FROM lead_source ORDER BY lead_id, created_at)
+        SELECT l.platform, coalesce(nullif(f.ad_id, ''), '') AS ad_id, {AGG}
+        FROM lead l LEFT JOIN first_src f ON f.lead_id = l.id
+        WHERE {LEAD_FILTER} AND l.platform IN ('google_ads', 'meta_ads')
+        GROUP BY 1, 2
+        """,
+        params,
+    ).fetchall()
+    keyed = [r for r in ad_rows if r["ad_id"]]
+    s.ads_unattributed = sum(int(r["leads"]) for r in ad_rows if not r["ad_id"])
+    if keyed:
+        from app.services import creatives
+
+        described = creatives.for_ads(conn, tenant["id"], [(r["platform"], r["ad_id"]) for r in keyed])
+        for r in keyed:
+            row = AdRow(f"{r['platform']}:{r['ad_id']}", "", platform=r["platform"], ad_id=r["ad_id"], creative=described.get((r["platform"], r["ad_id"])))
+            _fill(row, r)
+            row.label = f"{PLATFORM_LABELS[Platform(r['platform'])]}: {row.name}"
+            s.by_ad.append(row)
+        s.by_ad.sort(key=lambda x: (-x.leads, -x.revenue, x.platform, x.ad_id))
+        s.by_ad = s.by_ad[:30]
 
     # Speed to lead: minutes from arrival to the first logged touch; imports and calls that were answered on the
     # spot are excluded (an answered call is instant by definition and would flatter the number).
@@ -367,7 +427,12 @@ def month_period(year: int, month: int, tz_name: str) -> Period:
     return period(f"month:{year:04d}-{month:02d}", tz_name)
 
 
-def monthly_pdf(tenant: dict, s: Summary, *, show_spend: bool, agency_name: str) -> bytes:
+def _esc(text: str) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def monthly_pdf(tenant: dict, s: Summary, *, show_spend: bool, agency_name: str, thumbs: dict[tuple[str, str], tuple[bytes, str]] | None = None) -> bytes:
+    """`thumbs` maps (platform, ad_id) to image bytes for the By ad table; reports.ad_thumbs() collects them."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -432,6 +497,39 @@ def monthly_pdf(tenant: dict, s: Summary, *, show_spend: bool, agency_name: str)
         widths = [2.6 * inch, 0.6 * inch, 0.55 * inch, 0.85 * inch] + ([0.75 * inch, 0.8 * inch, 0.8 * inch] if show_spend else []) + [0.8 * inch]
         table("By campaign", head, rows, widths)
 
+    if s.by_ad:
+        from reportlab.platypus import Image as RLImage
+
+        cell = ParagraphStyle("cell", parent=body, fontSize=8.5, leading=10.5)
+        head = ["", "Ad", "Leads", "Contacted", "Won", "Revenue"]
+        rows = []
+        for r in s.by_ad[:15]:
+            pic: Any = ""
+            if r.thumb_path and thumbs is not None:
+                data = thumbs.get((r.platform, r.ad_id))
+                if data:
+                    try:
+                        pic = RLImage(io.BytesIO(data[0]), width=0.55 * inch, height=0.55 * inch, kind="proportional")
+                    except Exception:  # noqa: BLE001 - a bad image must not break the report
+                        pic = ""
+            desc = f"<b>{_esc(r.name)[:70]}</b>"
+            if r.where:
+                desc += f"<br/><font color='#4f5a66'>{_esc(r.where)[:90]}</font>"
+            if r.tagline:
+                desc += f"<br/><font color='#4f5a66'>“{_esc(r.tagline)[:90]}”</font>"
+            rows.append([pic, Paragraph(desc, cell), str(r.leads), pct(r.qualified_rate), str(r.won), money(r.revenue)])
+        story.append(Paragraph("By ad", h2))
+        tb = Table([head] + rows, colWidths=[0.7 * inch, 3.3 * inch, 0.6 * inch, 0.85 * inch, 0.55 * inch, 0.9 * inch], repeatRows=1)
+        tb.hAlign = "LEFT"
+        tb.setStyle(TableStyle([
+            ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9), ("FONT", (2, 1), (-1, -1), "Helvetica", 9), ("TEXTCOLOR", (0, 0), (-1, 0), ink2),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.8, ink), ("LINEBELOW", (0, 1), (-1, -1), 0.3, line), ("ALIGN", (2, 0), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("LEFTPADDING", (0, 0), (0, -1), 0),
+        ]))
+        story.append(tb)
+        if s.ads_unattributed:
+            story.append(Paragraph(f"{s.ads_unattributed} paid lead{'s' if s.ads_unattributed != 1 else ''} in this period arrived without an ad id and {'are' if s.ads_unattributed != 1 else 'is'} counted in the campaign and source tables only.", small))
+
     rows = [[r.label, str(r.leads), pct(r.qualified_rate), str(r.won), money(r.revenue)] for r in s.by_channel]
     table("How leads arrived", ["Channel", "Leads", "Contacted", "Won", "Revenue"], rows, [2.6 * inch, 0.7 * inch, 0.9 * inch, 0.6 * inch, 1.0 * inch])
 
@@ -474,4 +572,16 @@ def months_available(conn: psycopg.Connection, tenant_id: UUID, tz_name: str) ->
     while (y, m) >= (start.year, start.month) and len(out) < 24:
         out.append((y, m, f"{calendar.month_name[m]} {y}"))
         y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+    return out
+
+
+def ad_thumbs(conn: psycopg.Connection, tenant_id: UUID, s: Summary) -> dict[tuple[str, str], tuple[bytes, str]]:
+    from app.services import creatives
+
+    out: dict[tuple[str, str], tuple[bytes, str]] = {}
+    for r in s.by_ad[:15]:
+        if r.thumb_path:
+            t = creatives.thumb(conn, tenant_id, r.platform, r.ad_id)
+            if t:
+                out[(r.platform, r.ad_id)] = t
     return out

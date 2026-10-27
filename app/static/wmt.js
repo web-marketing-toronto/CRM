@@ -17,7 +17,7 @@
  */
 (function () {
   if (window.wmt) return;
-  var KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+  var KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "campaign_id", "adset_id", "ad_id"];
   var STORE = "wmt_attr";
   var DAYS = 90;
 
@@ -173,5 +173,5 @@
   if (window.MutationObserver) {
     new MutationObserver(function () { fillAll(); }).observe(document.documentElement, { childList: true, subtree: true });
   }
-  window.wmt = { attribution: attribution, fill: fill, fillAll: fillAll, beacon: beacon, version: "1.1" };
+  window.wmt = { attribution: attribution, fill: fill, fillAll: fillAll, beacon: beacon, version: "1.2" };
 })();

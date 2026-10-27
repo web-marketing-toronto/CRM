@@ -13,7 +13,7 @@ from app.auth.deps import require_agency, require_tenant
 from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
-from app.services import reports
+from app.services import creatives, reports
 
 router = APIRouter(tags=["reports"])
 
@@ -59,9 +59,22 @@ def client_monthly_pdf(request: Request, principal: Annotated[Principal, Depends
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="month should look like 2026-09") from exc
         summary = reports.tenant_summary(conn, tenant, p)
-    pdf = reports.monthly_pdf(tenant, summary, show_spend=_show_spend(tenant, principal), agency_name=get_settings().agency_name)
+        thumbs = reports.ad_thumbs(conn, tenant["id"], summary)
+    pdf = reports.monthly_pdf(tenant, summary, show_spend=_show_spend(tenant, principal), agency_name=get_settings().agency_name, thumbs=thumbs)
     name = f"{tenant['slug']}-{y:04d}-{m:02d}.pdf"
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/ads/{platform}/{ad_id}/thumb")
+def ad_thumbnail(platform: str, ad_id: str, principal: Annotated[Principal, Depends(require_tenant)]):
+    """The stored thumbnail of an ad; tenant-scoped, so a client only ever sees its own ads."""
+    if platform not in ("google_ads", "meta_ads"):
+        raise HTTPException(status_code=404)
+    with db(principal.tenant_id, principal.db_role) as conn:
+        t = creatives.thumb(conn, principal.tenant_id, platform, ad_id)
+    if t is None:
+        raise HTTPException(status_code=404)
+    return Response(t[0], media_type=t[1], headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/admin/reports")

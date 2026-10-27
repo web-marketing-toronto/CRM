@@ -40,6 +40,37 @@
 {% with rows=summary.by_campaign, total=none, first_col='Campaign', max_leads=(summary.by_campaign | map(attribute='leads') | max) %}{% include "reports/_source_table.html" %}{% endwith %}
 {% endif %}
 
+{% if summary.by_ad %}
+<h2 style="margin:18px 0 8px">By ad</h2>
+<div class="table-wrap">
+<table class="data ads">
+  <thead><tr><th>Ad</th><th class="num">Leads</th><th class="num">Contacted</th><th class="num">Won</th><th class="num">Revenue</th><th></th></tr></thead>
+  <tbody>
+  {% for r in summary.by_ad %}
+    <tr>
+      <td>
+        <div class="ad-cell">
+          {% if r.thumb_path %}<img class="ad-thumb" src="{{ r.thumb_path }}" alt="" loading="lazy" width="56" height="56">{% else %}<div class="ad-thumb ad-thumb-none" aria-hidden="true">{{ 'G' if r.platform == 'google_ads' else 'M' }}</div>{% endif %}
+          <div class="ad-text">
+            <div class="ad-name">{{ r.name }}</div>
+            <div class="ad-where">{{ 'Google Ads' if r.platform == 'google_ads' else 'Meta' }}{% if r.where %} · {{ r.where }}{% endif %}</div>
+            {% if r.tagline %}<div class="ad-where">“{{ r.tagline }}”</div>{% endif %}
+          </div>
+        </div>
+      </td>
+      <td class="num">{{ r.leads }}</td>
+      <td class="num">{{ r.qualified_rate | pct }}</td>
+      <td class="num">{{ r.won }}</td>
+      <td class="num">{{ r.revenue | money }}</td>
+      <td class="num">{% if r.link_url %}<a href="{{ r.link_url }}" target="_blank" rel="noopener" style="white-space:nowrap">View ad ↗</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if summary.ads_unattributed %}<p class="dim" style="font-size:13px;margin:6px 0 0">{{ summary.ads_unattributed }} paid lead{{ 's' if summary.ads_unattributed != 1 else '' }} arrived without an ad id, so {{ 'they are' if summary.ads_unattributed != 1 else 'it is' }} only in the tables above.</p>{% endif %}
+{% endif %}
+
 <h2 style="margin:18px 0 8px">How leads arrived</h2>
 {% with rows=summary.by_channel, total=none, first_col='Channel', max_leads=(summary.by_channel | map(attribute='leads') | max if summary.by_channel else 0), show_spend=false %}{% include "reports/_source_table.html" %}{% endwith %}
 

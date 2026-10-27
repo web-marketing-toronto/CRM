@@ -18,7 +18,7 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import adplatforms, conversions, email_intake, followup, importer, lead_messages
+from app.services import adplatforms, conversions, creatives, email_intake, followup, importer, lead_messages
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -102,6 +102,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
             """,
             (tenant_id,),
         ).fetchall()
+        ad_status = creatives.status_summary(conn, tenant_id)
     settings = get_settings()
     hours = tenant["business_hours"] or {}
     return {
@@ -121,6 +122,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "meta_cfg": conversions.meta_cfg(tenant),
         "conv": conversions.conv_cfg(tenant),
         "recent_conversions": recent_conv,
+        "ad_status": ad_status,
         "show_spend": bool(((tenant.get("settings") or {}).get("reports") or {}).get("show_spend")),
         "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
         "sms_cfg": {"relay_replies": True, "forward_calls_to": "", "office_line": "", "ring": "both", "office_hours_only": True, **((tenant.get("settings") or {}).get("sms") or {})},

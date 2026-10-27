@@ -279,6 +279,30 @@ Nightly after 04:00 Toronto the tick pulls yesterday's and the day before's camp
 with a Google customer id or Meta ad account id on their settings page. Nothing to schedule; it rides on
 `crm-tick`.
 
+### Which ad produced each lead (thumbnails on Results, the PDF and the lead)
+
+Leads that carry an ad id get the ad described from the platform within a minute of arriving: name,
+campaign, ad set, a thumbnail and a link to the ad. It shows as **By ad** on the client's Results page and
+monthly PDF, and as a strip on the lead itself. The thumbnail bytes are kept in `ad_creative` because the
+platforms' image URLs expire.
+
+* **Meta lead forms** carry the ad id on their own; nothing to set up beyond the Meta section above. The
+  lookup uses `crm-meta-access-token` (`ads_read` is enough for this part).
+* **Website leads** need the ad id in the landing-page URL; the attribution snippet picks it up and the
+  beacon / hidden fields carry it in. Once per campaign:
+  * Meta: Ads Manager → the ad → Tracking → URL parameters:
+    `utm_source=facebook&utm_medium=paid_social&utm_campaign={{campaign.name}}&campaign_id={{campaign.id}}&adset_id={{adset.id}}&ad_id={{ad.id}}`
+  * Google Ads: campaign (or account) settings → Final URL suffix:
+    `campaign_id={campaignid}&adset_id={adgroupid}&ad_id={creative}`
+    Search ads have no image, so the row shows the ad's headlines; image, display and Demand Gen ads show
+    their marketing image. Lookups use the same service-account credentials as the conversion uploads.
+* WordPress forms that only post known fields need hidden fields `campaign_id`, `adset_id`, `ad_id` as
+  well (same as the gclid / utm ones).
+
+The client's settings page shows how many leads carried an ad id and how many ads are described, missing
+(deleted on the platform) or failing; the Dashboard's Pipes panel shows the latest failure reason. Failed
+lookups are retried every 6 hours; described ads are refreshed every 14 days.
+
 ## 6b. Checking a deploy
 
 ```bash

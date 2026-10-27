@@ -54,6 +54,8 @@ class Outbox:
     spend_queries: list[dict[str, Any]] = field(default_factory=list)
     fake_spend: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # platform -> rows to return
     fake_check: dict[str, Any] | None = None  # what google_check returns in fake mode (an AdsError if an Exception)
+    fake_ads: dict[tuple[str, str], Any] = field(default_factory=dict)  # (platform, ad_id) -> ad dict, or an Exception to raise
+    ad_queries: list[tuple[str, str]] = field(default_factory=list)
 
     def clear(self) -> None:
         self.google_conversions.clear()
@@ -61,6 +63,8 @@ class Outbox:
         self.spend_queries.clear()
         self.fake_spend.clear()
         self.fake_check = None
+        self.fake_ads.clear()
+        self.ad_queries.clear()
 
 
 outbox = Outbox()
@@ -350,6 +354,23 @@ def describe_action(a: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def google_query(customer_id: str, gaql: str, *, headers: dict[str, str] | None = None, timeout: int = 30) -> list[dict[str, Any]]:
+    """Run one GAQL query through searchStream and return the flattened result rows."""
+    customer_id = re.sub(r"\D", "", customer_id or "")
+    if headers is None:
+        creds = google_creds()
+        if creds is None:
+            raise AdsError("No Google Ads credentials on this server", retryable=False)
+        headers = _google_headers(creds)
+    try:
+        r = httpx.post(f"{google_api()}/customers/{customer_id}/googleAds:searchStream", json={"query": gaql}, headers=headers, timeout=timeout)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Google Ads unreachable: {exc}") from exc
+    if r.status_code >= 300:
+        raise AdsError(_google_error(r), retryable=r.status_code >= 500)
+    return [row for chunk in r.json() for row in chunk.get("results", [])]
+
+
 def google_check(customer_id: str) -> dict[str, Any]:
     """Prove the Google Ads hookup for one client without sending anything: credentials present, OAuth
     works, the MCC can see the account, and which upload-type conversion actions exist. Raises AdsError
@@ -370,13 +391,7 @@ def google_check(customer_id: str) -> dict[str, Any]:
     headers = _google_headers(creds)  # raises AdsError if the OAuth refresh fails
 
     def query(gaql: str, timeout: int = 30) -> list[dict[str, Any]]:
-        try:
-            r = httpx.post(f"{google_api()}/customers/{customer_id}/googleAds:searchStream", json={"query": gaql}, headers=headers, timeout=timeout)
-        except httpx.HTTPError as exc:
-            raise AdsError(f"Google Ads unreachable: {exc}") from exc
-        if r.status_code >= 300:
-            raise AdsError(_google_error(r), retryable=r.status_code >= 500)
-        return [row for chunk in r.json() for row in chunk.get("results", [])]
+        return google_query(customer_id, gaql, headers=headers, timeout=timeout)
 
     acct = query("SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.manager FROM customer")
     c = (acct[0] if acct else {}).get("customer", {})
@@ -456,3 +471,113 @@ def meta_campaign_spend(ad_account_id: str, since: date, until: date) -> list[di
             break
         url, params = nxt, {}
     return rows
+
+
+# --- What an ad looked like ------------------------------------------------------------------------
+# Returned dict: name, adset_name, campaign_id, campaign_name, headline, body, link_url, image_url.
+# `None` means the platform has no such ad (deleted, or the id was never an ad id).
+
+GOOGLE_AD_FIELDS = (
+    "ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, "
+    "ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, "
+    "ad_group_ad.ad.image_ad.image_url, ad_group_ad.ad.image_ad.name, "
+    "ad_group_ad.ad.responsive_display_ad.marketing_images, ad_group_ad.ad.responsive_display_ad.headlines, "
+    "ad_group_ad.ad.responsive_display_ad.long_headline, ad_group_ad.ad.responsive_display_ad.descriptions, "
+    "ad_group_ad.ad.video_responsive_ad.headlines, ad_group_ad.ad.demand_gen_multi_asset_ad.headlines, ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images, "
+    "ad_group.name, campaign.id, campaign.name"
+)
+
+
+def _texts(items: Any, key: str = "text", n: int = 3) -> list[str]:
+    out = [str(i.get(key)) for i in (items or []) if isinstance(i, dict) and i.get(key)]
+    return out[:n]
+
+
+def google_ad(customer_id: str, ad_id: str) -> dict[str, Any] | None:
+    s = get_settings()
+    ad_id = re.sub(r"\D", "", ad_id or "")
+    if s.ads_provider == "fake":
+        outbox.ad_queries.append(("google_ads", ad_id))
+        hit = outbox.fake_ads.get(("google_ads", ad_id))
+        if isinstance(hit, Exception):
+            raise hit
+        return hit
+    if s.ads_provider == "log":
+        return None
+    if not ad_id:
+        return None
+    rows = google_query(customer_id, f"SELECT {GOOGLE_AD_FIELDS} FROM ad_group_ad WHERE ad_group_ad.ad.id = {ad_id}")
+    if not rows:
+        return None
+    r = rows[0]
+    ad, group, camp = r.get("adGroupAd", {}).get("ad", {}), r.get("adGroup", {}), r.get("campaign", {})
+    kind = str(ad.get("type", "")).lower().replace("_", " ")
+    rsa, rda, img, dg = ad.get("responsiveSearchAd") or {}, ad.get("responsiveDisplayAd") or {}, ad.get("imageAd") or {}, ad.get("demandGenMultiAssetAd") or {}
+    headlines = _texts(rsa.get("headlines")) or ([rda["longHeadline"]["text"]] if rda.get("longHeadline", {}).get("text") else []) or _texts(rda.get("headlines")) or _texts(dg.get("headlines")) or _texts((ad.get("videoResponsiveAd") or {}).get("headlines"))
+    descriptions = _texts(rsa.get("descriptions"), n=1) or _texts(rda.get("descriptions"), n=1)
+    image_url = img.get("imageUrl")
+    if not image_url:
+        assets = [a.get("asset") for a in (rda.get("marketingImages") or dg.get("marketingImages") or []) if isinstance(a, dict) and a.get("asset")]
+        if assets:
+            names = ", ".join(f"'{a}'" for a in assets[:1])
+            arows = google_query(customer_id, f"SELECT asset.resource_name, asset.image_asset.full_size.url FROM asset WHERE asset.resource_name IN ({names})")
+            for ar in arows:
+                image_url = ((ar.get("asset") or {}).get("imageAsset") or {}).get("fullSize", {}).get("url")
+                if image_url:
+                    break
+    final = (ad.get("finalUrls") or [None])[0]
+    return {
+        "name": ad.get("name") or img.get("name") or (headlines[0] if headlines else f"{kind or 'ad'} {ad_id}"),
+        "adset_name": group.get("name"), "campaign_id": str(camp.get("id") or "") or None, "campaign_name": camp.get("name"),
+        "headline": " | ".join(headlines) or None, "body": descriptions[0] if descriptions else None,
+        "link_url": final, "image_url": image_url, "kind": kind or None,
+    }
+
+
+META_AD_FIELDS = (
+    "id,name,effective_status,adset{name},campaign{id,name},preview_shareable_link,"
+    "creative{id,name,title,body,thumbnail_url,image_url,effective_object_story_id,object_story_spec{link_data{link,message,name,picture},video_data{title,message,image_url}}}"
+)
+
+
+def meta_ad(ad_id: str) -> dict[str, Any] | None:
+    s = get_settings()
+    ad_id = re.sub(r"\D", "", ad_id or "")
+    if s.ads_provider == "fake":
+        outbox.ad_queries.append(("meta_ads", ad_id))
+        hit = outbox.fake_ads.get(("meta_ads", ad_id))
+        if isinstance(hit, Exception):
+            raise hit
+        return hit
+    if s.ads_provider == "log":
+        return None
+    if not s.meta_access_token:
+        raise AdsError("Meta access token is not configured", retryable=False)
+    if not ad_id:
+        return None
+    try:
+        r = httpx.get(f"{GRAPH}/{ad_id}", params={"access_token": s.meta_access_token, "fields": META_AD_FIELDS, "thumbnail_width": 600, "thumbnail_height": 600}, timeout=30)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Meta unreachable: {exc}") from exc
+    if r.status_code >= 300:
+        try:
+            err = r.json().get("error", {})
+        except ValueError:
+            err = {}
+        code, sub = int(err.get("code", 0) or 0), int(err.get("error_subcode", 0) or 0)
+        if r.status_code == 404 or code == 100 or sub == 33:  # "Unsupported get request": not an ad id, or not ours
+            return None
+        raise AdsError(f"Meta ad lookup {r.status_code}: {err.get('message') or r.text[:200]}", retryable=code in (1, 2, 4, 17, 32, 613) or r.status_code >= 500)
+    d = r.json()
+    cr = d.get("creative") or {}
+    spec = cr.get("object_story_spec") or {}
+    link = spec.get("link_data") or {}
+    video = spec.get("video_data") or {}
+    story = cr.get("effective_object_story_id")
+    link_url = d.get("preview_shareable_link") or (f"https://www.facebook.com/{story.replace('_', '/posts/')}" if story and "_" in story else None)
+    return {
+        "name": d.get("name") or cr.get("name") or f"Ad {ad_id}",
+        "adset_name": (d.get("adset") or {}).get("name"), "campaign_id": str((d.get("campaign") or {}).get("id") or "") or None, "campaign_name": (d.get("campaign") or {}).get("name"),
+        "headline": cr.get("title") or link.get("name") or video.get("title"), "body": cr.get("body") or link.get("message") or video.get("message"),
+        "link_url": link_url, "image_url": cr.get("image_url") or link.get("picture") or video.get("image_url") or cr.get("thumbnail_url"), "kind": None,
+    }

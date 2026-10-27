@@ -17,7 +17,7 @@ from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
 from app.models import ActivityType, LeadStatus, LostReason, Platform
-from app.services import followup, lead_messages
+from app.services import creatives, followup, lead_messages
 from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
@@ -137,6 +137,11 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
             "SELECT * FROM activity WHERE lead_id = %s ORDER BY occurred_at DESC, id DESC LIMIT 200", (lead_id,)
         ).fetchall()
         source = conn.execute("SELECT * FROM lead_source WHERE lead_id = %s ORDER BY created_at ASC LIMIT 1", (lead_id,)).fetchone()
+        creative = None
+        if source and source.get("ad_id") and source.get("platform") in ("google_ads", "meta_ads"):
+            creative = creatives.for_ads(conn, lead["tenant_id"], [(source["platform"], source["ad_id"])]).get((source["platform"], source["ad_id"]))
+            if creative and creative.get("status") != "ok":
+                creative = None
         users = conn.execute(
             "SELECT id, name FROM app_user WHERE tenant_id = %s AND is_active ORDER BY name", (principal.tenant_id,)
         ).fetchall()
@@ -154,7 +159,7 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         "intro": intro,
         "email_links": svc_email_links(lead, full_tenant, principal, intro),
         "sync": sync,
-        "lead": lead, "activity": activity, "source": source, "users": users, "job_types": (tenant or {}).get("job_types") or [],
+        "lead": lead, "activity": activity, "source": source, "creative": creative, "users": users, "job_types": (tenant or {}).get("job_types") or [],
         "next_reminder": next_reminder, "now": datetime.now(UTC),
         "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
         "relay": bool(full_tenant and followup.relay_enabled(full_tenant)),
