@@ -42,6 +42,33 @@
     if (e.detail.xhr.status === 401 || e.detail.xhr.status === 403) { window.location.reload(); }
   });
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/static/sw.js').catch(function () {}); }
+  // Anything that scrolls sideways (tables, the filter row) gets a fade + arrow so it's obvious there's more.
+  (function () {
+    var ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+    function cue(side, el) {
+      var d = document.createElement('div'); d.className = 'scroll-cue ' + side; d.setAttribute('aria-hidden', 'true');
+      var b = document.createElement('button'); b.type = 'button'; b.tabIndex = -1; b.innerHTML = ARROW;
+      if (side === 'left') b.style.transform = 'scaleX(-1)';
+      b.addEventListener('click', function () { el.scrollBy({ left: (side === 'right' ? 1 : -1) * el.clientWidth * 0.8, behavior: 'smooth' }); });
+      d.appendChild(b); return d;
+    }
+    function update(el, wrap) {
+      var max = el.scrollWidth - el.clientWidth;
+      wrap.classList.toggle('more-right', max > 4 && el.scrollLeft < max - 4);
+      wrap.classList.toggle('more-left', el.scrollLeft > 4);
+    }
+    function enhance(el) {
+      if (el.dataset.scroller) return; el.dataset.scroller = '1';
+      var wrap = document.createElement('div'); wrap.className = 'scroller' + (el.classList.contains('tabs') ? ' is-tabs' : '');
+      el.parentNode.insertBefore(wrap, el); wrap.appendChild(el); wrap.appendChild(cue('left', el)); wrap.appendChild(cue('right', el));
+      var tick = function () { update(el, wrap); };
+      el.addEventListener('scroll', tick, { passive: true }); window.addEventListener('resize', tick);
+      if (window.ResizeObserver) new ResizeObserver(tick).observe(el);
+      tick();
+    }
+    function scan() { document.querySelectorAll('.table-wrap, .tabs').forEach(enhance); }
+    scan(); document.body.addEventListener('htmx:afterSettle', scan); window.addEventListener('load', scan);
+  })();
 </script>
 {% block scripts %}{% endblock %}
 </body>
