@@ -17,7 +17,8 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <script src="{{ static_url('htmx.min.js') }}" defer></script>
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+{% set nav_mode = ('menu' if principal.is_agency else 'tabs') if principal else 'none' %}
+<body class="nav-{{ nav_mode }}" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
 {% block topbar %}
 <header class="topbar">
   {% block topbar_left %}
@@ -25,14 +26,27 @@
     {% if principal and principal.tenant %}{{ principal.tenant.name }}{% if principal.is_agency %}<small>viewing as agency</small>{% endif %}{% else %}{{ settings.agency_name }}{% endif %}
   </div>
   {% endblock %}
-  <nav>
+  {% if nav_mode == 'menu' %}
+  <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mainnav" aria-label="Menu">
+    <svg class="i-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <svg class="i-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+  </button>
+  {% endif %}
+  <nav id="mainnav" aria-label="Main">
     {% if principal %}
-      {% if principal.tenant %}<a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}">Leads</a><a href="/reports" class="{{ 'current' if request.url.path.startswith('/reports') else '' }}">Results</a>{% endif %}
-      {% if principal.is_agency %}<a href="/dashboard" class="{{ 'current' if request.url.path == '/dashboard' else '' }}">Dashboard</a><a href="/admin" class="{{ 'current' if request.url.path.startswith('/admin') and not request.url.path.startswith(('/admin/reports', '/admin/team')) else '' }}">Clients</a><a href="/admin/reports" class="{{ 'current' if request.url.path.startswith('/admin/reports') else '' }}">Reports</a><a href="/admin/team" class="{{ 'current' if request.url.path.startswith('/admin/team') else '' }}">Team</a>{% endif %}
-      <a href="/account" class="{{ 'current' if request.url.path.startswith('/account') else '' }}" aria-label="Account">{{ principal.user.name.split(' ')[0] }}</a>
+      {% if principal.tenant %}{% if nav_mode == 'menu' %}<span class="nav-group">{{ principal.tenant.name }}</span>{% endif %}<a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}">Leads</a><a href="/reports" class="{{ 'current' if request.url.path.startswith('/reports') else '' }}">Results</a>{% endif %}
+      {% if principal.is_agency %}{% if nav_mode == 'menu' %}<span class="nav-group">{{ settings.agency_name }}</span>{% endif %}<a href="/dashboard" class="{{ 'current' if request.url.path == '/dashboard' else '' }}">Dashboard</a><a href="/admin" class="{{ 'current' if request.url.path.startswith('/admin') and not request.url.path.startswith(('/admin/reports', '/admin/team')) else '' }}">Clients</a><a href="/admin/reports" class="{{ 'current' if request.url.path.startswith('/admin/reports') else '' }}">Reports</a><a href="/admin/team" class="{{ 'current' if request.url.path.startswith('/admin/team') else '' }}">Team</a>{% endif %}
+      {% if nav_mode == 'menu' %}<span class="nav-group">Signed in as</span>{% endif %}<a href="/account" class="{{ 'current' if request.url.path.startswith('/account') else '' }}" aria-label="Account">{{ principal.user.name.split(' ')[0] }}</a>
     {% endif %}
   </nav>
 </header>
+{% if nav_mode == 'tabs' %}
+<nav class="tabbar" aria-label="Main">
+  <a href="/leads" class="{{ 'current' if request.url.path.startswith('/leads') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Leads</a>
+  <a href="/reports" class="{{ 'current' if request.url.path.startswith('/reports') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>Results</a>
+  <a href="/account" class="{{ 'current' if request.url.path.startswith('/account') else '' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>Account</a>
+</nav>
+{% endif %}
 {% endblock %}
 <main class="page {% block page_class %}{% endblock %}">
 {% block content %}{% endblock %}
@@ -42,6 +56,15 @@
     if (e.detail.xhr.status === 401 || e.detail.xhr.status === 403) { window.location.reload(); }
   });
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/static/sw.js').catch(function () {}); }
+  // Agency menu on phones.
+  (function () {
+    var bar = document.querySelector('.topbar'), btn = document.querySelector('.menu-toggle');
+    if (!bar || !btn) return;
+    function set(open) { bar.classList.toggle('open', open); btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+    btn.addEventListener('click', function () { set(!bar.classList.contains('open')); });
+    document.addEventListener('click', function (e) { if (bar.classList.contains('open') && !bar.contains(e.target)) set(false); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') set(false); });
+  })();
   // Anything that scrolls sideways (tables, the filter row) gets a fade + arrow so it's obvious there's more.
   (function () {
     var ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
@@ -59,7 +82,7 @@
     }
     function enhance(el) {
       if (el.dataset.scroller) return; el.dataset.scroller = '1';
-      var wrap = document.createElement('div'); wrap.className = 'scroller' + (el.classList.contains('tabs') ? ' is-tabs' : '') + (el.matches('.topbar nav') ? ' is-nav' : '');
+      var wrap = document.createElement('div'); wrap.className = 'scroller' + (el.classList.contains('tabs') ? ' is-tabs' : '');
       el.parentNode.insertBefore(wrap, el); wrap.appendChild(el); wrap.appendChild(cue('left', el)); wrap.appendChild(cue('right', el));
       var tick = function () { update(el, wrap); };
       el.addEventListener('scroll', tick, { passive: true }); window.addEventListener('resize', tick);
@@ -68,7 +91,7 @@
       if (cur && el.scrollWidth > el.clientWidth) { el.scrollLeft = Math.max(0, cur.offsetLeft - (el.clientWidth - cur.offsetWidth) / 2); }
       tick();
     }
-    function scan() { document.querySelectorAll('.table-wrap, .tabs, .topbar nav').forEach(enhance); }
+    function scan() { document.querySelectorAll('.table-wrap, .tabs').forEach(enhance); }
     scan(); document.body.addEventListener('htmx:afterSettle', scan); window.addEventListener('load', scan);
   })();
 </script>
