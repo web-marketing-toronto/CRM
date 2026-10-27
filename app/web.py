@@ -107,6 +107,29 @@ def _minutes(value) -> str:
     return f"{v / 1440:.1f} d"
 
 
+
+
+def _asset_versions() -> dict[str, str]:
+    """A short content hash per static file, so a changed stylesheet gets a new URL and no cache can hold the old one."""
+    import hashlib
+
+    out: dict[str, str] = {}
+    static = Path(__file__).resolve().parent / "static"
+    for f in static.iterdir():
+        if f.is_file():
+            out[f.name] = hashlib.sha256(f.read_bytes()).hexdigest()[:10]
+    return out
+
+
+ASSET_VERSIONS = _asset_versions()
+
+
+def static_url(name: str) -> str:
+    v = ASSET_VERSIONS.get(name)
+    return f"/static/{name}?v={v}" if v else f"/static/{name}"
+
+
+env.globals["static_url"] = static_url
 env.filters["pct"] = _pct
 env.filters["minutes"] = _minutes
 env.filters["relative"] = _relative
