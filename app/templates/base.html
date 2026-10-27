@@ -59,14 +59,16 @@
     }
     function enhance(el) {
       if (el.dataset.scroller) return; el.dataset.scroller = '1';
-      var wrap = document.createElement('div'); wrap.className = 'scroller' + (el.classList.contains('tabs') ? ' is-tabs' : '');
+      var wrap = document.createElement('div'); wrap.className = 'scroller' + (el.classList.contains('tabs') ? ' is-tabs' : '') + (el.matches('.topbar nav') ? ' is-nav' : '');
       el.parentNode.insertBefore(wrap, el); wrap.appendChild(el); wrap.appendChild(cue('left', el)); wrap.appendChild(cue('right', el));
       var tick = function () { update(el, wrap); };
       el.addEventListener('scroll', tick, { passive: true }); window.addEventListener('resize', tick);
       if (window.ResizeObserver) new ResizeObserver(tick).observe(el);
+      var cur = el.querySelector('.current');  // keep the current page's link on screen in a nav that scrolls
+      if (cur && el.scrollWidth > el.clientWidth) { el.scrollLeft = Math.max(0, cur.offsetLeft - (el.clientWidth - cur.offsetWidth) / 2); }
       tick();
     }
-    function scan() { document.querySelectorAll('.table-wrap, .tabs').forEach(enhance); }
+    function scan() { document.querySelectorAll('.table-wrap, .tabs, .topbar nav').forEach(enhance); }
     scan(); document.body.addEventListener('htmx:afterSettle', scan); window.addEventListener('load', scan);
   })();
 </script>

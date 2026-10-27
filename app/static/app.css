@@ -31,6 +31,7 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+html, body { overflow-x: clip; max-width: 100%; }  /* nothing may push the page wider than the screen; sideways scrolling lives inside tables and nav */
 body {
   margin: 0;
   background: var(--paper);
@@ -60,10 +61,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
   height: 56px; padding: 0 14px;
 }
 .topbar a { color: #fff; }
-.topbar .brand { font-weight: 700; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.topbar .brand { font-weight: 700; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 0; min-width: 64px; }
 .topbar .brand small { display: block; font-size: 12px; font-weight: 500; color: #b9c0c8; line-height: 1.1; }
 .topbar .back { font-size: 15px; font-weight: 600; padding: 10px 6px 10px 0; }
-.topbar nav { display: flex; gap: 4px; }
+.topbar nav { display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.topbar nav::-webkit-scrollbar { display: none; }
+.topbar nav a, .topbar nav button { white-space: nowrap; flex: none; }
+@media (max-width: 480px) {
+  .topbar { gap: 8px; padding: 0 10px; }
+  .topbar nav a, .topbar nav button { padding: 8px 7px; font-size: 13.5px; }
+  .topbar .brand { min-width: 64px; }
+}
 .topbar nav a, .topbar nav button {
   background: none; border: 0; color: #d7dde4; padding: 8px 10px; border-radius: var(--radius);
   font-weight: 600; font-size: 14px; cursor: pointer;
@@ -296,6 +304,13 @@ input.otp { font-size: 26px; letter-spacing: 0.3em; text-align: center; min-heig
 .scroller.is-tabs > .scroll-cue.left { left: 0; }
 .scroller.is-tabs > .scroll-cue.right { background: linear-gradient(to right, rgba(238, 240, 236, 0), rgba(238, 240, 236, 0.65) 65%); }
 .scroller.is-tabs > .scroll-cue.left { background: linear-gradient(to left, rgba(238, 240, 236, 0), rgba(238, 240, 236, 0.65) 65%); }
+.scroller.is-nav { flex: 0 1 auto; min-width: 0; }
+.scroller.is-nav > nav { max-width: 100%; }
+.scroller.is-nav > .scroll-cue { top: 0; bottom: 0; width: 44px; padding: 0 2px; }
+.scroller.is-nav > .scroll-cue.right { right: 0; border-radius: 0; background: linear-gradient(to right, rgba(22, 32, 43, 0), rgba(22, 32, 43, 0.9) 60%); }
+.scroller.is-nav > .scroll-cue.left { left: 0; border-radius: 0; background: linear-gradient(to left, rgba(22, 32, 43, 0), rgba(22, 32, 43, 0.9) 60%); }
+.scroller.is-nav .scroll-cue button { width: 24px; height: 24px; background: rgba(255, 255, 255, 0.18); color: var(--hivis); box-shadow: none; }
+.scroller.is-nav .scroll-cue button svg { width: 14px; height: 14px; }
 .scroller.more-right > .scroll-cue.right, .scroller.more-left > .scroll-cue.left { opacity: 1; }
 .scroller.more-right > .scroll-cue.right button, .scroller.more-left > .scroll-cue.left button { pointer-events: auto; }
 .scroll-cue button {
@@ -319,11 +334,13 @@ table.data .name { font-weight: 700; color: var(--ink); font-size: 15px; }
 .kv dd { margin: 0; word-break: break-all; }
 .kv.words dd { word-break: normal; }
 pre.snippet { background: var(--ink); color: #e8ecf1; padding: 14px; border-radius: var(--radius); font-size: 12.5px; overflow-x: auto; line-height: 1.5; }
-.user-row { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
+.user-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
+.user-row .who { min-width: 0; overflow-wrap: anywhere; }
 .user-row:first-child { border-top: 0; }
 .user-row .who strong { display: block; }
 .user-row .who span { font-size: 13px; color: var(--ink-2); }
 .user-row .ops { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 600px) { .user-row { grid-template-columns: minmax(0, 1fr); } .user-row .ops { justify-content: flex-start; } }
 
 @media (min-width: 720px) {
   .status-row { grid-template-columns: repeat(5, 1fr); }
