@@ -200,3 +200,30 @@ def test_account_test_text_needs_a_mobile(client, make_tenant, make_user, outbox
     r = client.post("/account/test-text", data={"csrf_token": csrf}, follow_redirects=False)
     assert r.status_code == 303 and "error=" in r.headers["location"]
     assert outbox.sms == []
+
+
+def test_dashboard_lists_failed_uploads_with_reason(client, make_tenant, make_user, admin_conn):
+    """A conversion that gave up shows on the dashboard with its reason and a retry button."""
+    import re
+
+    import pyotp
+
+    from app.auth import crypto
+
+    t = make_tenant("roofco", name="North Ridge Roofing", settings={"google_ads": {"customer_id": "1234567890"}, "conversions": {"enabled": True}})
+    url = f"/v1/intake/{t['slug']}/{t['intake_key']}"
+    lead_id = client.post(url, json={"name": "G One", "phone": "7055550001", "gclid": "a"}).json()["lead_id"]
+    admin_conn.execute(
+        "INSERT INTO conversion_event (tenant_id, lead_id, platform, action, status, last_error, attempted_at) VALUES (%s, %s, 'google_ads', 'qualified', 'failed', %s, now())",
+        (t["id"], lead_id, "No Google conversion action set for 'qualified' on North Ridge Roofing"),
+    )
+    u = make_user("boss@agency.test", role="agency_admin", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), u["id"]))
+    client.post("/login", data={"email": "boss@agency.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    html = client.get("/dashboard").text
+    assert "Uploads that gave up" in html and "No Google conversion action set for 'qualified'" in html and "Retry now" in html
+    assert "Meta: <strong>no token</strong>" in html or "Meta: token loaded" in html

@@ -110,7 +110,8 @@
         </div>
         <div class="pipe {{ 'bad' if pipes.conv_failed else ('good' if pipes.ads_live else 'off') }}">
           <dt>Ad platforms</dt>
-          <dd>{% if not pipes.ads_live %}provider <code>{{ pipes.ads_provider }}</code> · nothing is really sent{% else %}Google: {% if pipes.google_creds %}credentials loaded ({{ pipes.google_creds }}){% else %}<strong>no credentials</strong> (crm-google-ads-yaml not deployed){% endif %} · Meta: {% if pipes.meta_configured %}app token loaded{% else %}not configured{% endif %}{% endif %}
+          <dd>{% if not pipes.ads_live %}provider <code>{{ pipes.ads_provider }}</code> · nothing is really sent{% else %}Google: {% if pipes.google_creds %}credentials loaded ({{ pipes.google_creds }}){% else %}<strong>no credentials</strong> (crm-google-ads-yaml not deployed){% endif %}
+            <br>Meta: {% if pipes.meta_token %}token loaded{% else %}<strong>no token</strong> (crm-meta-access-token not deployed){% endif %} · lead-form webhook {% if pipes.meta_webhook %}configured{% else %}<strong>not configured</strong> (crm-meta-app-secret / crm-meta-verify-token){% endif %}{% endif %}
             <br>{% if pipes.conv_pending or pipes.conv_failed %}{{ pipes.conv_pending }} conversion{{ '' if pipes.conv_pending == 1 else 's' }} waiting{% if pipes.conv_failed %} · <strong>{{ pipes.conv_failed }} failed</strong>{% endif %}{% else %}no uploads waiting{% endif %}
             {% if pipes.conv_last_sent %}<br>last upload {{ pipes.conv_last_sent | relative }}{% endif %}
             {% if pipes.spend_at %}<br>spend pulled {{ pipes.spend_at | relative }}{% endif %}
@@ -118,6 +119,20 @@
         </div>
       </dl>
     </div>
+
+    {% if failed_uploads %}
+    <div class="section"><h2>Uploads that gave up <span class="dim" style="font-weight:400;font-size:14px">{{ failed_uploads | length }}</span></h2></div>
+    <div class="panel problems">
+      {% for c in failed_uploads %}
+      <div class="problem">
+        <div><strong>{{ 'Google Ads' if c.platform == 'google_ads' else 'Meta' }}</strong> {{ 'Qualified' if c.action == 'qualified' else 'Won' }}{% if c.value %} ${{ c.value }}{% endif %} · {{ c.tenant_name }} · <a href="/admin/tenants/{{ c.tenant_id }}/leads/{{ c.lead_id }}">{{ c.ref_code }} {{ c.contact_name or '' }}</a> · <span class="dim">{{ (c.attempted_at or c.created_at) | relative }}</span></div>
+        <div class="err">{{ c.last_error or 'no reason recorded' }}</div>
+        <form method="post" action="/admin/conversions/{{ c.id }}/retry" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Retry now</button></form>
+        <a class="dim" href="/admin/tenants/{{ c.tenant_id }}#conversions" style="margin-left:10px">Client's ad settings</a>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     {% if problems %}
     <div class="section"><h2>Delivery problems <span class="dim" style="font-weight:400;font-size:14px">last 24 h</span></h2></div>

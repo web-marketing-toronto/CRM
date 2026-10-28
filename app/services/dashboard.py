@@ -186,6 +186,19 @@ def delivery_problems(
     ).fetchall()
 
 
+def failed_uploads(conn: psycopg.Connection, *, limit: int = 20) -> list[dict]:
+    """Conversion uploads that gave up, with the reason, so the fix is obvious from the dashboard."""
+    return conn.execute(
+        """
+        SELECT c.id, c.platform, c.action, c.value, c.last_error, c.attempted_at, c.created_at, c.lead_id, c.tenant_id,
+               t.name AS tenant_name, l.ref_code, l.contact_name
+        FROM conversion_event c JOIN tenant t ON t.id = c.tenant_id JOIN lead l ON l.id = c.lead_id
+        WHERE c.status = 'failed' ORDER BY coalesce(c.attempted_at, c.created_at) DESC LIMIT %s
+        """,
+        (limit,),
+    ).fetchall()
+
+
 def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
     """Is each outside connection alive: texting, email, the scheduler tick, ad-platform uploads."""
     s = get_settings()
@@ -230,6 +243,7 @@ def pipes(conn: psycopg.Connection, *, now: datetime) -> dict[str, Any]:
         "mail_enabled": email_intake.enabled(), "mail_user": s.imap_user or s.smtp_user or s.email_from,
         "mail_late": jobs["mail_at"] is None or (now - jobs["mail_at"]) > timedelta(minutes=HEARTBEAT_LATE_MINUTES),
         "meta_configured": bool(s.meta_app_secret and s.meta_access_token),
+        "meta_token": bool(s.meta_access_token), "meta_webhook": bool(s.meta_app_secret and s.meta_verify_token),
         **m,
         **jobs,
         "tick_late": tick_late,
@@ -252,6 +266,7 @@ def build(conn: psycopg.Connection, *, now: datetime | None = None) -> dict[str,
         "clients": client_rows(conn, now=now),
         "recent": recent_leads(conn),
         "problems": delivery_problems(conn, now=now),
+        "failed_uploads": failed_uploads(conn),
         "pipes": pipes(conn, now=now),
         "team_count": conn.execute(
             "SELECT count(*) AS n FROM app_user WHERE role = 'agency_admin' AND is_active"

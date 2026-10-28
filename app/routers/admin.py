@@ -303,14 +303,17 @@ async def google_ads_check(request: Request, tenant_id: UUID, principal: Annotat
 
 
 @router.post("/conversions/{event_id}/retry", dependencies=[Depends(check_csrf)])
-def conversion_retry(event_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+def conversion_retry(event_id: UUID, request: Request, principal: Annotated[Principal, Depends(require_agency)]):
     with db(None, "agency_admin") as conn:
-        ev = conn.execute("SELECT lead_id FROM conversion_event WHERE id = %s", (event_id,)).fetchone()
+        ev = conn.execute("SELECT lead_id, tenant_id FROM conversion_event WHERE id = %s", (event_id,)).fetchone()
         if ev is None:
             raise HTTPException(status_code=404, detail="Not found")
         conversions.retry(conn, event_id)
         conversions.process_pending(conn, lead_id=ev["lead_id"])
-    return RedirectResponse(f"/leads/{ev['lead_id']}", status_code=303)
+    back = request.headers.get("referer", "")
+    if "/dashboard" in back:
+        return RedirectResponse("/dashboard", status_code=303)
+    return RedirectResponse(f"/admin/tenants/{ev['tenant_id']}/leads/{ev['lead_id']}", status_code=303)
 
 
 def parse_lead_messaging(form) -> dict:
