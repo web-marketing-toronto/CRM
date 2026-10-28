@@ -42,7 +42,7 @@ def test_new_lead_alerts_immediately_and_schedules_nudges(client, setup, admin_c
     # The new-lead alert went out in the request's background task: one text and one email to the assignee.
     assert len(outbox.sms) == 1 and outbox.sms[0]["to"] == "+17055551000"
     assert "New lead: Mike Reynolds (A001), Roof replacement in Bracebridge" in outbox.sms[0]["body"]
-    assert "Reply 1 called" in outbox.sms[0]["body"]
+    assert "Tap to call, text or log what happened: http://testserver/go/" in outbox.sms[0]["body"] and "Reply 1" not in outbox.sms[0]["body"]
     assert len(outbox.email) == 1 and outbox.email[0]["to"] == "owner@roofco.test"
     assert "/act/" in outbox.email[0]["html"]  # one-tap action links
     # Still pending: two nudges and the agency escalation.
@@ -85,7 +85,7 @@ def test_touch_cancels_nudges_and_starts_cadence(client, setup, admin_conn, outb
     with system_db() as conn:
         stats = followup.dispatch_due(conn, now=datetime.now(UTC) + timedelta(days=1, hours=12))
     assert stats.sent == 1 and len(outbox.sms) == 1
-    assert "Follow up with Mike (A001)" in outbox.sms[0]["body"] and "5 snooze 3 days" in outbox.sms[0]["body"]
+    assert "Follow up with Mike (A001)" in outbox.sms[0]["body"] and "/go/" in outbox.sms[0]["body"] and "snooze" not in outbox.sms[0]["body"]
     assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'reminder_sent'", (lead_id,)).fetchone()["n"] == 1
 
 
@@ -175,7 +175,7 @@ def test_reply_codes_from_the_owner(client, setup, admin_conn, outbox):
     with system_db() as conn:
         out = followup.apply_reply_code(conn, owner, "5")
     assert "Snoozed Mike (A001) until" in out.reply
-    assert _rules(admin_conn, lead_id) == ["snoozed"]
+    assert _rules(admin_conn, lead_id) == ["next_step"]  # snoozing is the "waiting on them" next step
     with system_db() as conn:
         out = followup.apply_reply_code(conn, owner, "W 8,500")
     assert "marked Won at $8,500" in out.reply
@@ -196,8 +196,9 @@ def test_reply_code_with_ref_picks_that_lead(client, setup, admin_conn):
         out = followup.apply_reply_code(conn, owner, "Z999 1")
     assert "No lead Z999" in out.reply
     with system_db() as conn:
-        out = followup.apply_reply_code(conn, owner, "hello?")
-    assert out.reply.startswith("Codes:")
+        out = followup.apply_text_reply(conn, owner, "hello, left a voicemail just now")
+    assert out.handled and out.reply.startswith("Noted on Second (A002)") and "/go/" in out.reply  # free text becomes a note on the last-reminded lead
+    assert admin_conn.execute("SELECT body FROM activity WHERE lead_id = %s AND type = 'note' ORDER BY id DESC LIMIT 1", (second,)).fetchone()["body"] == "hello, left a voicemail just now"
 
 
 def test_lead_reply_alerts_and_restarts_cadence(client, setup, admin_conn, outbox):
@@ -259,14 +260,14 @@ def test_snooze_from_the_app_and_cron_tick(client, setup, login, make_user, admi
     login("member@roofco.test")
     csrf = csrf_from(client)
     r = client.post(f"/leads/{lead_id}/snooze", data={"days": "3", "csrf_token": csrf}, headers={"HX-Request": "true"})
-    assert r.status_code == 200 and "Snoozed until" in r.text
-    assert _rules(admin_conn, lead_id) == ["snoozed"]
+    assert r.status_code == 200 and "Next:</strong> waiting on them" in r.text
+    assert _rules(admin_conn, lead_id) == ["next_step"]
     r = client.post("/internal/cron/tick", headers={"X-Cron-Secret": "test-cron"})
     assert r.status_code == 200 and r.json()["ok"] is True and "sent" in r.json()
     # The tick helper itself with a far-future clock sends the snooze-over reminder.
     outbox.clear()
     result = worker.run_tick(now=datetime.now(UTC) + timedelta(days=4))
-    assert result["sent"] >= 1 and any("Snooze over" in m["body"] for m in outbox.sms)
+    assert result["sent"] >= 1 and any(m["body"].startswith("You were waiting on Mike and nothing has come in") and "/go/" in m["body"] for m in outbox.sms)
 
 
 def test_email_action_link_logs_a_touch(client, setup, admin_conn):

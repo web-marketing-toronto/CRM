@@ -101,6 +101,7 @@ class ActivityType(StrEnum):
     IMPORT = "import"
     APPOINTMENT = "appointment"
     ESCALATION = "escalation"
+    OUTCOME = "outcome"
 
 
 # Logging any of these on a New lead moves it to Contacted automatically.
@@ -122,6 +123,7 @@ ACTIVITY_LABELS = {
     ActivityType.IMPORT: "Imported",
     ActivityType.APPOINTMENT: "Appointment",
     ActivityType.ESCALATION: "Escalated to agency",
+    ActivityType.OUTCOME: "Outcome",
 }
 
 

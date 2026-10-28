@@ -17,7 +17,7 @@ from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
 from app.models import ActivityType, LeadStatus, LostReason, Platform
-from app.services import creatives, followup, lead_messages
+from app.services import creatives, followup, lead_messages, outcomes
 from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
@@ -28,10 +28,13 @@ NEEDS_ACTION_SQL = """
     (
         NOT (l.flags ? 'needs_review')
         AND (
-        l.status = 'new'
-        OR (l.status IN ('contacted', 'no_response') AND COALESCE(l.last_touch_at, l.created_at) < now() - interval '1 day')
-        OR (l.status = 'quoted' AND COALESCE(l.quoted_at, l.created_at) < now() - interval '7 days')
-        OR (l.next_action_at IS NOT NULL AND l.next_action_at <= now())
+        (l.next_step_at IS NOT NULL AND l.next_step_at <= now())
+        OR (l.next_step_at IS NULL AND (
+            l.status = 'new'
+            OR (l.status IN ('contacted', 'no_response') AND COALESCE(l.last_touch_at, l.created_at) < now() - interval '1 day')
+            OR (l.status = 'quoted' AND COALESCE(l.quoted_at, l.created_at) < now() - interval '7 days')
+            OR (l.next_action_at IS NOT NULL AND l.next_action_at <= now())
+        ))
         )
     )
 """
@@ -98,7 +101,10 @@ def lead_list(request: Request, principal: Annotated[Principal, Depends(require_
             """,
             (principal.tenant_id,),
         ).fetchone()
-    return web.render(request, "leads/list.html", leads=rows, view=view, q=q, counts=counts)
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+    now = datetime.now(UTC)
+    nexts = {r["id"]: outcomes.describe_next(tenant, r, now=now) for r in rows}
+    return web.render(request, "leads/list.html", leads=rows, view=view, q=q, counts=counts, nexts=nexts)
 
 
 def _load(principal: Principal, lead_id: UUID) -> dict:
@@ -128,7 +134,7 @@ def svc_email_links(lead: dict, tenant: dict | None, principal: Principal, intro
     }
 
 
-def _detail_context(principal: Principal, lead_id: UUID) -> dict:
+def _detail_context(principal: Principal, lead_id: UUID, *, request_flag: str | None = None) -> dict:
     with db(principal.tenant_id, principal.db_role) as conn:
         lead = svc.get_lead(conn, lead_id)
         if lead is None:
@@ -153,6 +159,8 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         full_tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
         sync = conn.execute("SELECT * FROM conversion_event WHERE lead_id = %s ORDER BY created_at", (lead_id,)).fetchall() if principal.is_agency else []
         texted_before = any(a["type"] == ActivityType.TEXT_SENT.value for a in activity)
+        now = datetime.now(UTC)
+        pending = outcomes.awaiting_outcome(activity, now=now)
         # The Text button pre-fills the client's intro message the first time; after that it opens blank.
         intro = "" if texted_before or not full_tenant or lead.get("status") in ("won", "lost") else lead_messages.intro_text(conn, full_tenant, lead, principal.user)
     return {
@@ -160,7 +168,9 @@ def _detail_context(principal: Principal, lead_id: UUID) -> dict:
         "email_links": svc_email_links(lead, full_tenant, principal, intro),
         "sync": sync,
         "lead": lead, "activity": activity, "source": source, "creative": creative, "users": users, "job_types": (tenant or {}).get("job_types") or [],
-        "next_reminder": next_reminder, "now": datetime.now(UTC),
+        "next_reminder": next_reminder, "now": now,
+        "choices": outcomes.choices(full_tenant), "next": outcomes.describe_next(full_tenant, lead, now=now), "pending_touch": pending,
+        "ask_next": request_flag,
         "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
         "relay": bool(full_tenant and followup.relay_enabled(full_tenant)),
         "can_call": bool(full_tenant and full_tenant.get("twilio_number") and principal.user.get("mobile_e164")),
@@ -198,15 +208,15 @@ async def new_lead_submit(request: Request, principal: Annotated[Principal, Depe
 
 
 @router.get("/leads/{lead_id}")
-def lead_detail(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)]):
-    return web.render(request, "leads/detail.html", **_detail_context(principal, lead_id))
+def lead_detail(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], ask_next: str | None = None):
+    return web.render(request, "leads/detail.html", **_detail_context(principal, lead_id, request_flag=ask_next))
 
 
-def _respond(request: Request, principal: Principal, lead_id: UUID, error: str | None = None):
+def _respond(request: Request, principal: Principal, lead_id: UUID, error: str | None = None, ask_next: str | None = None):
     if request.headers.get("hx-request"):
-        ctx = _detail_context(principal, lead_id)
+        ctx = _detail_context(principal, lead_id, request_flag=ask_next)
         return web.render(request, "leads/_lead.html", status_code=400 if error else 200, error=error, **ctx)
-    return RedirectResponse(f"/leads/{lead_id}", status_code=303)
+    return RedirectResponse(f"/leads/{lead_id}" + (f"?ask_next={ask_next}" if ask_next else ""), status_code=303)
 
 
 @router.post("/leads/{lead_id}/touch", dependencies=[Depends(check_csrf)])
@@ -296,6 +306,73 @@ def text_lead(request: Request, lead_id: UUID, principal: Annotated[Principal, D
             lead_messages.send_text(conn, tenant, lead, body, actor_id=principal.user_id, actor_label=principal.label)
         except svc.LeadError as exc:
             return _respond(request, principal, lead_id, error=str(exc))
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/outcome", dependencies=[Depends(check_csrf)])
+def outcome(
+    request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)],
+    outcome: Annotated[str, Form()], next_step: Annotated[str, Form()] = "", when: Annotated[str, Form()] = "", when_exact: Annotated[str, Form()] = "",
+    note: Annotated[str, Form()] = "", value: Annotated[str, Form()] = "", lost_reason: Annotated[str, Form()] = "",
+):
+    when = when.strip() or when_exact.strip()
+    """One tap on 'what happened' after a call, text or email; optionally with the next step and its time."""
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        amount: Decimal | None = None
+        if value.strip():
+            try:
+                amount = Decimal(value.replace("$", "").replace(",", "").strip())
+            except InvalidOperation:
+                return _respond(request, principal, lead_id, error="The amount should be a number, like 8500")
+        reason: LostReason | None = None
+        if lost_reason.strip():
+            try:
+                reason = LostReason(lost_reason)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="unknown reason") from exc
+        at = outcomes.resolve_when(tenant, when)
+        if when.strip() and at is None:
+            return _respond(request, principal, lead_id, error="Pick a date and time")
+        if outcome == "spoke" and not next_step.strip():
+            # First tap: record that they spoke, then ask what's next.
+            try:
+                outcomes.record(conn, tenant, lead, "spoke", actor_id=principal.user_id, actor_label=principal.label, next_step="call_back", at=at, note=note.strip() or None)
+            except svc.LeadError as exc:
+                return _respond(request, principal, lead_id, error=str(exc))
+            background_dispatch(lead_id)
+            return _respond(request, principal, lead_id, ask_next="spoke")
+        try:
+            outcomes.record(conn, tenant, lead, outcome, actor_id=principal.user_id, actor_label=principal.label, next_step=next_step.strip() or None, at=at, note=note.strip() or None, value=amount, lost_reason=reason)
+        except svc.LeadError as exc:
+            return _respond(request, principal, lead_id, error=str(exc))
+    background_dispatch(lead_id)
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/next-step", dependencies=[Depends(check_csrf)])
+def next_step(
+    request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)],
+    step: Annotated[str, Form()] = "", when: Annotated[str, Form()] = "", when_exact: Annotated[str, Form()] = "", note: Annotated[str, Form()] = "",
+):
+    """Set, change or clear the one planned next step."""
+    when = when.strip() or when_exact.strip()
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        at = outcomes.resolve_when(tenant, when)
+        if when.strip() and at is None:
+            return _respond(request, principal, lead_id, error="Pick a date and time")
+        try:
+            outcomes.set_next_step(conn, tenant, lead, step.strip() or None, at, actor_id=principal.user_id, actor_label=principal.label, note=note.strip() or None)
+        except svc.LeadError as exc:
+            return _respond(request, principal, lead_id, error=str(exc))
+    background_dispatch(lead_id)
     return _respond(request, principal, lead_id)
 
 

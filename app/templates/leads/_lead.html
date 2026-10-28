@@ -110,21 +110,92 @@
       {% endif %}
     </div>
     <div class="hint">{% if can_text %}Call rings you first, then {{ (lead.contact_name or 'them').split(' ')[0] }}. Calls and texts go through {{ texting_number | phone }}, so they only ever see the business number; the thread stays here whichever phone you use.{% else %}Tapping logs the attempt and moves a new lead to Contacted.{% endif %}{% if intro %} Text starts with your first-text wording{% if principal.role.value in ('owner', 'agency_admin') %} (<a href="/messages">change it</a>){% endif %}.{% endif %}{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
-    {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
-    <div class="next-up">
-      <span>
-        {% if lead.snoozed_until and lead.snoozed_until > now %}Snoozed until {{ lead.snoozed_until | local(tz) }}.
-        {% elif next_reminder %}Next reminder {{ next_reminder.due_at | local(tz) }}{% if next_reminder.rule == 'nudge' %} (still not contacted){% elif next_reminder.rule == 'close_loop' %} (did the quote close?){% endif %}.
-        {% else %}No reminder scheduled.{% endif %}
-        {% if lead.appointment_at %} Appointment {{ lead.appointment_at | local(tz) }}.{% endif %}
-      </span>
-      <span class="snooze">
-        <form method="post" action="/leads/{{ lead.id }}/snooze" hx-post="/leads/{{ lead.id }}/snooze" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="days" value="1"><button class="btn ghost small" type="submit">Snooze 1 day</button></form>
-        <form method="post" action="/leads/{{ lead.id }}/snooze" hx-post="/leads/{{ lead.id }}/snooze" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="days" value="3"><button class="btn ghost small" type="submit">3 days</button></form>
-      </span>
-    </div>
-    {% endif %}
   </div>
+
+  {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
+  <div id="outcome" class="outcome {{ 'hot' if pending_touch or ask_next else '' }}">
+    {% if ask_next == 'spoke' %}
+      <div class="o-head"><strong>Spoke to {{ (lead.contact_name or 'them').split(' ')[0] }}.</strong> What's next?</div>
+    {% elif pending_touch %}
+      <div class="o-head"><strong>How did it go?</strong> <span class="dim">{{ pending_touch.type | activity_label }} {{ pending_touch.occurred_at | relative }}</span></div>
+    {% else %}
+      <div class="o-head"><strong>What happened?</strong> <span class="dim">Tap after each call, text or email.</span></div>
+    {% endif %}
+    {% if ask_next != 'spoke' %}
+    <div class="chips">
+      {% for key, label in choices.outcomes %}
+      {% if key in ('booked', 'quoted', 'not_interested') %}
+        <button class="chip-btn {{ 'closing' if key == 'not_interested' else '' }}" type="button" data-reveal="o-{{ key }}">{{ label }}</button>
+      {% elif key in ('wrong_number', 'spam') %}
+        <form method="post" action="/leads/{{ lead.id }}/outcome" hx-post="/leads/{{ lead.id }}/outcome" hx-target="#lead" hx-swap="outerHTML" style="display:contents" onsubmit="return confirm('{{ label }}: mark this lead Lost and stop reminders?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="outcome" value="{{ key }}"><button class="chip-btn closing" type="submit">{{ label }}</button></form>
+      {% else %}
+        <form method="post" action="/leads/{{ lead.id }}/outcome" hx-post="/leads/{{ lead.id }}/outcome" hx-target="#lead" hx-swap="outerHTML" style="display:contents"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="outcome" value="{{ key }}"><button class="chip-btn {{ 'primary' if key == 'spoke' else '' }}" type="submit">{{ label }}</button></form>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% if 'booked' in (choices.outcomes | map(attribute=0) | list) %}
+    <form class="reveal" id="reveal-o-booked" method="post" action="/leads/{{ lead.id }}/outcome" hx-post="/leads/{{ lead.id }}/outcome" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="outcome" value="booked">
+      <label style="font-weight:600">{{ choices.words.next }} on</label>
+      <input name="when" type="datetime-local" required>
+      <button class="btn hivis" type="submit">Book it</button>
+      <span class="dim" style="flex-basis:100%;font-size:13px">They get a confirmation text; you get a "{{ choices.words.prompt | lower | replace('?', '') }}" prompt afterwards.</span>
+    </form>
+    {% endif %}
+    <form class="reveal" id="reveal-o-quoted" method="post" action="/leads/{{ lead.id }}/outcome" hx-post="/leads/{{ lead.id }}/outcome" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="outcome" value="quoted">
+      <label style="font-weight:600">Quote amount <span class="dim" style="font-weight:400">(optional)</span></label>
+      <input name="value" type="text" inputmode="decimal" placeholder="8500">
+      <label style="font-weight:600">Follow up</label>
+      <select name="when"><option value="in_2_days">In 2 days</option><option value="tomorrow">Tomorrow</option><option value="next_week">Next week</option></select>
+      <button class="btn hivis" type="submit">Sent a quote</button>
+    </form>
+    <form class="reveal" id="reveal-o-not_interested" method="post" action="/leads/{{ lead.id }}/outcome" hx-post="/leads/{{ lead.id }}/outcome" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="outcome" value="not_interested">
+      <label style="font-weight:600">Why</label>
+      <select name="lost_reason" required>
+        <option value="">Pick a reason</option>
+        {% for r in LostReason %}{% if r.value not in ('spam',) %}<option value="{{ r.value }}">{{ LOST_REASON_LABELS[r] }}</option>{% endif %}{% endfor %}
+      </select>
+      <button class="btn" type="submit">Mark lost</button>
+    </form>
+    {% endif %}
+
+    {# ---- Next step ---- #}
+    <div class="next-step {{ 'overdue' if next and next.overdue else '' }}">
+      {% if next and ask_next != 'spoke' %}
+        <div class="ns-now">
+          <span><strong>Next:</strong> {{ next.label | lower }} {{ next.when }}{% if next.note %} <span class="dim">— {{ next.note }}</span>{% endif %}{% if next.overdue %} <span class="pill overdue">due</span>{% endif %}</span>
+          <span style="white-space:nowrap">
+            <button class="btn ghost small" type="button" data-reveal="ns-change">Change</button>
+            <form method="post" action="/leads/{{ lead.id }}/next-step" hx-post="/leads/{{ lead.id }}/next-step" hx-target="#lead" hx-swap="outerHTML" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit" name="step" value="">Clear</button></form>
+          </span>
+        </div>
+      {% else %}
+        <div class="ns-now"><span><strong>Next:</strong> <span class="dim">{% if ask_next == 'spoke' %}pick one{% else %}nothing planned{% endif %}</span></span>{% if ask_next != 'spoke' %}<button class="btn ghost small" type="button" data-reveal="ns-change">Plan a step</button>{% endif %}</div>
+      {% endif %}
+      <form class="reveal ns-form {{ 'open' if ask_next == 'spoke' else '' }}" id="reveal-ns-change" method="post" action="/leads/{{ lead.id }}/next-step" hx-post="/leads/{{ lead.id }}/next-step" hx-target="#lead" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="chips" role="radiogroup">
+          {% for key, label in choices.steps %}
+          <label class="chip-radio"><input type="radio" name="step" value="{{ key }}" {{ 'checked' if (next and next.step == key and ask_next != 'spoke') or (ask_next == 'spoke' and loop.first) else '' }}> {{ label }}</label>
+          {% endfor %}
+        </div>
+        <div class="when">
+          <label class="chip-radio"><input type="radio" name="when" value="later_today"> Later today</label>
+          <label class="chip-radio"><input type="radio" name="when" value="tomorrow" checked> Tomorrow</label>
+          <label class="chip-radio"><input type="radio" name="when" value="in_2_days"> In 2 days</label>
+          <label class="chip-radio"><input type="radio" name="when" value="next_week"> Next week</label>
+          <label class="chip-radio pick"><input type="radio" name="when" value="" id="ns-pick"> Pick… <input type="datetime-local" name="when_exact" oninput="document.getElementById('ns-pick').checked = true"></label>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input name="note" type="text" placeholder="Note, e.g. wants a quote by Friday" style="flex:1;min-width:160px">
+          <button class="btn hivis" type="submit">Save next step</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
 
   {% if lead.phone_e164 and lead.status not in ('won', 'lost') %}
   <div>
@@ -143,37 +214,19 @@
   </div>
   {% endif %}
 
-  {% if lead.status not in ('won', 'lost') %}
-  <div>
-    <form class="appt" method="post" action="/leads/{{ lead.id }}/appointment" hx-post="/leads/{{ lead.id }}/appointment" hx-target="#lead" hx-swap="outerHTML">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label for="appt-when" style="font-weight:600">Estimate / appointment</label>
-      {% if lead.appointment_at %}
-        <span class="appt-set">{{ lead.appointment_at | local(tz, '%a %b %-d, %-I:%M %p') }}</span>
-        <button class="btn ghost small" type="submit" name="when" value="">Clear</button>
-      {% else %}
-        <input id="appt-when" name="when" type="datetime-local" required>
-        <button class="btn ghost small" type="submit">Set</button>
-        <span class="dim" style="font-size:13px">They get a confirmation text; reminders pause until after the visit.</span>
-      {% endif %}
-    </form>
-  </div>
-  {% endif %}
-
   <div class="status">
     {% if lead.status == 'won' %}
       <div class="closed-note won">Won{% if lead.deal_value %} · {{ lead.deal_value | money }}{% endif %}{% if lead.won_at %} · {{ lead.won_at | local(tz, '%b %-d') }}{% endif %}</div>
     {% elif lead.status == 'lost' %}
       <div class="closed-note lost">Lost · {{ lead.lost_reason | lost_label }}{% if lead.lost_at %} · {{ lead.lost_at | local(tz, '%b %-d') }}{% endif %}</div>
     {% endif %}
-    <div class="status-row">
-      {% for s in ['contacted', 'no_response', 'quoted'] %}
+    <div class="status-row closers">
+      {% if lead.status in ('won', 'lost') %}
       <form method="post" action="/leads/{{ lead.id }}/status" hx-post="/leads/{{ lead.id }}/status" hx-target="#lead" hx-swap="outerHTML" style="display:contents">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="status" value="{{ s }}">
-        <button class="sbtn {{ 'on' if lead.status == s else '' }}" type="submit" {{ 'disabled' if lead.status == s else '' }}>{{ s | status_label }}</button>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="contacted">
+        <button class="sbtn" type="submit">Reopen</button>
       </form>
-      {% endfor %}
+      {% endif %}
       <button class="sbtn won {{ 'on' if lead.status == 'won' else '' }}" type="button" data-reveal="won" {{ 'disabled' if lead.status == 'won' else '' }}>Won</button>
       <button class="sbtn lost {{ 'on' if lead.status == 'lost' else '' }}" type="button" data-reveal="lost" {{ 'disabled' if lead.status == 'lost' else '' }}>Lost</button>
     </div>
@@ -220,7 +273,7 @@
     <ul class="timeline">
       {% for a in activity %}
       <li>
-        <span class="dot {{ 'touch' if a.type in ('call_attempt','text_sent','email_sent') else 'lead' if a.type in ('created','duplicate_submission') else 'won' if a.type == 'status_change' and a.detail.to == 'won' else 'lost' if a.type == 'status_change' and a.detail.to == 'lost' else 'reply' if a.type == 'lead_replied' else '' }}"></span>
+        <span class="dot {{ 'touch' if a.type in ('call_attempt','text_sent','email_sent','outcome') else 'lead' if a.type in ('created','duplicate_submission') else 'won' if a.type == 'status_change' and a.detail.to == 'won' else 'lost' if a.type == 'status_change' and a.detail.to == 'lost' else 'reply' if a.type == 'lead_replied' else '' }}"></span>
         <div>
           <div class="what">
             {% if a.type == 'status_change' %}{{ a.detail.to | status_label }}{% if a.detail.deal_value %} · ${{ a.detail.deal_value }}{% endif %}{% if a.detail.lost_reason %} · {{ a.detail.lost_reason | lost_label }}{% endif %}{% if a.detail.auto %} <span class="who">(automatic)</span>{% endif %}
@@ -229,13 +282,15 @@
             {% elif a.type == 'reminder_sent' %}Reminder sent <span class="who">{{ a.body }}</span>
             {% elif a.type == 'auto_message' %}Automatic {{ 'text' if a.detail.channel in ('twilio', 'fake', 'log') and a.detail.kind != 'email' else 'message' }} to them{% if not a.detail.delivered %} <span class="who">(not delivered{% if a.detail.error %}: {{ a.detail.error }}{% endif %})</span>{% endif %}
             {% elif a.type == 'appointment' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'outcome' %}{{ a.body }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'lead_replied' and a.detail.channel == 'email' %}They replied by email{% if a.detail.subject %} <span class="who">{{ a.detail.subject }}</span>{% endif %}
             {% elif a.type == 'conversion_sent' %}{% if a.detail.status == 'failed' %}Not sent to {{ 'Google Ads' if a.detail.platform == 'google_ads' else 'Meta' }} <span class="who">{{ a.body }}</span>{% else %}Sent to ad platform <span class="who">{{ a.body }}</span>{% endif %}
             {% elif a.type == 'call_attempt' and a.detail.kind == 'crm_call' %}Called through the CRM <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted {{ 'from their phone' if a.detail.via == 'phone' else 'from the app' }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent') and a.detail.kind != 'crm_call' %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent', 'outcome') and a.detail.kind != 'crm_call' %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>

@@ -18,7 +18,16 @@ from app.auth.service import AuthError, Principal
 from app.config import get_settings
 from app.db import db
 from app.models import Role
-from app.services import adplatforms, conversions, creatives, email_intake, followup, importer, lead_messages
+from app.services import (
+    adplatforms,
+    conversions,
+    creatives,
+    email_intake,
+    followup,
+    importer,
+    lead_messages,
+    outcomes,
+)
 from app.services.normalize import normalize_phone
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -123,6 +132,7 @@ def _tenant_ctx(tenant_id: UUID) -> dict:
         "conv": conversions.conv_cfg(tenant),
         "recent_conversions": recent_conv,
         "ad_status": ad_status,
+        "appointment_kind": outcomes.appointment_kind(tenant),
         "show_spend": bool(((tenant.get("settings") or {}).get("reports") or {}).get("show_spend")),
         "call_min_seconds": ((tenant.get("settings") or {}).get("callrail") or {}).get("min_seconds", 30),
         "sms_cfg": {"relay_replies": True, "forward_calls_to": "", "office_line": "", "ring": "both", "office_hours_only": True, **((tenant.get("settings") or {}).get("sms") or {})},
@@ -398,6 +408,7 @@ async def tenant_update(request: Request, tenant_id: UUID, principal: Annotated[
                     "meta": {**ads_cfg["meta"], "page_id": meta_page_id}, "google_ads": ads_cfg["google_ads"], "conversions": ads_cfg["conversions"],
                     "reports": {"show_spend": form.get("show_spend") == "on"},
                     "sms": {"relay_replies": form.get("relay_replies") == "on", "forward_calls_to": forward_to, "office_line": office_line, "ring": ring, "office_hours_only": form.get("office_hours_only") == "on"},
+                    "appointments": {"kind": (get("appointment_kind") or "visit") if (get("appointment_kind") or "visit") in ("visit", "call", "off") else "visit"},
                 }), tenant_id,
             ),
         )

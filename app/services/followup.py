@@ -50,7 +50,7 @@ DEFAULTS: dict[str, Any] = {
     "ignored_before_escalation": 2,
 }
 
-CLIENT_RULES = ("new_alert", "nudge", "cadence", "reply_nudge", "replied", "resubmit", "close_loop", "snoozed", "after_appointment")
+CLIENT_RULES = ("new_alert", "nudge", "cadence", "reply_nudge", "replied", "resubmit", "close_loop", "snoozed", "after_appointment", "next_step")
 LEAD_FACING_RULES = ("ack", "decline", "appointment")
 
 
@@ -157,7 +157,7 @@ def on_lead_created(conn: psycopg.Connection, tenant: dict, lead: dict, *, now: 
     schedule(conn, tenant_id=tid, lead_id=lid, user_id=None, rule="escalation", due_at=base + timedelta(hours=float(cfg["escalate_after_hours"])), key=f"{lid}:escalation:new:{_ts(base)}", payload={"why": "untouched"})
 
 
-def _schedule_cadence(conn: psycopg.Connection, tenant: dict, lead: dict, base: datetime) -> None:
+def _schedule_cadence(conn: psycopg.Connection, tenant: dict, lead: dict, base: datetime, *, tag: str = "") -> None:
     cfg = settings_for(tenant)
     tid, lid, uid = tenant["id"], lead["id"], lead.get("assigned_to")
     days = list(cfg["cadence_days"])
@@ -165,7 +165,7 @@ def _schedule_cadence(conn: psycopg.Connection, tenant: dict, lead: dict, base: 
         schedule(
             conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="cadence",
             due_at=next_business_time(base + timedelta(days=float(d)), tenant),
-            key=f"{lid}:cadence:{i}:{_ts(base)}", payload={"n": i, "final": i == len(days)},
+            key=f"{lid}:cadence:{i}:{_ts(base)}{(':' + tag) if tag else ''}", payload={"n": i, "final": i == len(days)},
         )
     conn.execute("UPDATE lead SET cadence_base = %s, snoozed_until = NULL WHERE id = %s", (base, lid))
 
@@ -177,6 +177,10 @@ def on_touch(conn: psycopg.Connection, tenant: dict, lead: dict, *, now: datetim
     now = now or datetime.now(UTC)
     cancel(conn, lead["id"], ("new_alert", "nudge", "escalation", "cadence", "reply_nudge", "snoozed", "close_loop"))
     acknowledge(conn, lead["id"])
+    if lead.get("next_step") in ("call_back", "waiting"):
+        # The planned call-back (or the wait) is what just happened; the outcome prompt asks what's next.
+        conn.execute("UPDATE lead SET next_step = NULL, next_step_at = NULL, next_step_note = NULL, snoozed_until = NULL WHERE id = %s", (lead["id"],))
+        cancel(conn, lead["id"], ("next_step",))
     _schedule_cadence(conn, tenant, lead, now)
 
 
@@ -188,6 +192,7 @@ def on_status_change(conn: psycopg.Connection, tenant: dict, lead: dict, old: Le
     acknowledge(conn, lid)
     if new in (LeadStatus.WON, LeadStatus.LOST):
         cancel(conn, lid)
+        conn.execute("UPDATE lead SET next_step = NULL, next_step_at = NULL, next_step_note = NULL, snoozed_until = NULL WHERE id = %s", (lid,))
         return
     if new == LeadStatus.QUOTED:
         cancel(conn, lid)
@@ -202,25 +207,31 @@ def on_status_change(conn: psycopg.Connection, tenant: dict, lead: dict, old: Le
         on_touch(conn, tenant, {**lead, "status": new.value}, now=now)
 
 
-def on_lead_replied(conn: psycopg.Connection, tenant: dict, lead: dict, text: str, *, now: datetime | None = None, alert: bool = True) -> None:
+def on_lead_replied(conn: psycopg.Connection, tenant: dict, lead: dict, text: str, *, now: datetime | None = None, alert: bool = True, channel: str | None = None, subject: str | None = None) -> None:
     """The lead texted (or called) back. Alert now, nudge in a few hours if nobody responds, restart the cadence.
     `alert=False` when the client already knows (their phone just rang)."""
     now = now or datetime.now(UTC)
     lid, tid, uid = lead["id"], tenant["id"], lead.get("assigned_to")
-    conn.execute("UPDATE lead SET last_reply_at = %s, next_action_at = %s WHERE id = %s", (now, now, lid))
-    lead_svc.log_activity(conn, tid, lid, ActivityType.LEAD_REPLIED, actor_label=lead.get("contact_name") or "lead", body=text[:2000], occurred_at=now)
+    conn.execute(
+        "UPDATE lead SET last_reply_at = %s, next_action_at = %s, next_step = CASE WHEN next_step = 'appointment' THEN next_step END, "
+        "next_step_at = CASE WHEN next_step = 'appointment' THEN next_step_at END, snoozed_until = NULL WHERE id = %s",
+        (now, now, lid),
+    )
+    if lead.get("next_step") != "appointment":
+        cancel(conn, lid, ("next_step",))
+    lead_svc.log_activity(conn, tid, lid, ActivityType.LEAD_REPLIED, actor_label=lead.get("contact_name") or "lead", body=text[:2000], detail={"channel": channel, "subject": subject} if channel else None, occurred_at=now)
     if lead.get("status") == LeadStatus.NO_RESPONSE.value:
         conn.execute("UPDATE lead SET status = 'contacted' WHERE id = %s", (lid,))
         lead_svc.log_activity(conn, tid, lid, ActivityType.STATUS_CHANGE, detail={"from": "no_response", "to": "contacted", "auto": True, "because": "lead replied"}, occurred_at=now)
     if lead.get("status") in (LeadStatus.WON.value, LeadStatus.LOST.value):
         if alert:
-            schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
+            schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300], "channel": channel or "sms", "subject": subject or ""})
         return
     cancel(conn, lid, ("cadence", "reply_nudge", "nudge", "snoozed"))
     cfg = settings_for(tenant)
     if alert:
-        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300]})
-        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="reply_nudge", due_at=now + timedelta(hours=float(cfg["reply_nudge_hours"])), key=f"{lid}:reply_nudge:{_ts(now)}", payload={"text": text[:300]})
+        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="replied", due_at=now, key=f"{lid}:replied:{_ts(now)}", payload={"text": text[:300], "channel": channel or "sms", "subject": subject or ""})
+        schedule(conn, tenant_id=tid, lead_id=lid, user_id=uid, rule="reply_nudge", due_at=now + timedelta(hours=float(cfg["reply_nudge_hours"])), key=f"{lid}:reply_nudge:{_ts(now)}", payload={"text": text[:300], "channel": channel or "sms"})
     _schedule_cadence(conn, tenant, lead, now)
 
 
@@ -230,13 +241,12 @@ def on_resubmitted(conn: psycopg.Connection, tenant: dict, lead: dict, *, now: d
 
 
 def on_snooze(conn: psycopg.Connection, tenant: dict, lead: dict, days: int, *, now: datetime | None = None) -> datetime:
+    """Snoozing is the 'waiting on them' next step with a date."""
+    from app.services import outcomes
+
     now = now or datetime.now(UTC)
-    lid = lead["id"]
-    cancel(conn, lid, ("cadence", "reply_nudge", "nudge", "snoozed", "escalation"))  # snoozing is engagement; nothing to escalate
-    acknowledge(conn, lid)
     until = next_business_time(now + timedelta(days=days), tenant)
-    conn.execute("UPDATE lead SET snoozed_until = %s, next_action_at = %s WHERE id = %s", (until, until, lid))
-    schedule(conn, tenant_id=tenant["id"], lead_id=lid, user_id=lead.get("assigned_to"), rule="snoozed", due_at=until, key=f"{lid}:snoozed:{_ts(now)}")
+    outcomes.set_next_step(conn, tenant, lead, "waiting", until, actor_id=None, actor_label="system", now=now, log=False)
     return until
 
 
@@ -303,8 +313,12 @@ def _rel(dt: datetime | None, now: datetime) -> str:
     return f"{s // 86400} d ago"
 
 
-CODES_SHORT = "Reply 1 called, 2 texted, 3 emailed, 4 snooze 1 day."
-CODES_FULL = "Reply 1 called, 2 texted, 3 emailed, 4 snooze 1 day, 5 snooze 3 days."
+def open_link(lead_id: UUID, user_id: UUID | None) -> str:
+    """One tap from a text: opens the lead on that phone, signed in as the user, at the outcome strip.
+    Compact on purpose (it rides in an SMS); valid for a week."""
+    if user_id is None:
+        return _lead_url(lead_id)
+    return f"{get_settings().base_url}/go/{crypto.short_token(lead_id, user_id, salt='go')}"
 
 
 def _area_note(lead: dict, tenant: dict, user: dict | None) -> str:
@@ -326,49 +340,68 @@ def _area_note(lead: dict, tenant: dict, user: dict | None) -> str:
 
 
 def compose(rule: str, lead: dict, tenant: dict, payload: dict, now: datetime, user: dict | None = None) -> tuple[str, str, str]:
-    """(sms_text, email_subject, email_text) for a client-facing reminder."""
+    """(sms_text, email_subject, email_text) for a client-facing reminder. Every text ends with one link that
+    opens the lead on the phone, signed in, so the answer is a tap rather than a code."""
+    from app.services import outcomes
+
     who = _lead_line(lead)
-    contact = _contact_line(lead, tenant)
     url = _lead_url(lead["id"])
+    link = open_link(lead["id"], user["id"] if user else None)
+    phone = f"Call {format_phone_display(lead['phone_e164'])}. " if lead.get("phone_e164") and not tenant.get("twilio_number") else ""
     src = PLATFORM_LABELS.get(Platform(lead.get("platform", "unknown")), "")
     if rule == "new_alert":
         area = _area_note(lead, tenant, user)
         missed = " MISSED CALL, call back now." if (lead.get("flags") or {}).get("missed_call") else ""
-        sms = f"New lead: {who}, via {src}.{missed}{area} {contact}. {CODES_SHORT}"
-        return sms, f"New lead: {who}", f"{who}\nSource: {src}{missed}{area}\n{contact}\n\n{(lead.get('message') or '').strip()}\n\nOpen: {url}"
+        sms = f"New lead: {who}, via {src}.{missed}{area} {phone}Tap to call, text or log what happened: {link}"
+        return sms, f"New lead: {who}", f"{who}\nSource: {src}{missed}{area}\n{_contact_line(lead, tenant)}\n\n{(lead.get('message') or '').strip()}\n\nOpen: {url}"
     if rule == "after_appointment":
         when = lead.get("appointment_at")
         at = when.astimezone(tz_for(tenant)).strftime("%a %-I:%M %p") if when else "today"
-        sms = f"How did the appointment with {who} ({at}) go? Mark it Quoted in the app, or reply W 8500 if won, L if lost, K to keep following up."
-        return sms, f"After the appointment: {who}", f"The appointment with {who} was {at}. Update the lead: Quoted, Won (with the value) or Lost.\n\nOpen: {url}"
+        prompt = outcomes.appointment_words(tenant)["prompt"] or "How did the appointment go?"
+        sms = f"{prompt} {who}, {at}. Tap to log it: {link}"
+        return sms, f"{prompt} {who}", f"The appointment with {who} was {at}. Log how it went: quoted, won (with the value), lost, or what's next.\n\nOpen: {url}"
+    if rule == "next_step":
+        step = payload.get("step")
+        note = f" ({payload['note']})" if payload.get("note") else ""
+        first = (lead.get("contact_name") or "them").split(" ")[0]
+        head = {
+            "call_back": f"Time to call {first} back",
+            "send_quote": f"Time to send {first} the quote",
+            "waiting": f"You were waiting on {first} and nothing has come in",
+        }.get(step, f"Time to follow up with {first}")
+        sms = f"{head}: {who}{note}. {phone}Tap to log what happened: {link}"
+        return sms, f"{head}: {who}", f"{head}{note}.\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
     if rule == "nudge":
         age = _rel(lead.get("created_at"), now)
-        sms = f"Still waiting: {who} came in {age} and hasn't been contacted. {contact}. Reply 1/2/3 when you reach out."
-        return sms, f"Not yet contacted: {who}", f"{who} arrived {age} and nobody has reached out yet.\n{contact}\n\nOpen: {url}"
+        sms = f"Still waiting: {who} came in {age} and hasn't been contacted. {phone}Tap to call or text: {link}"
+        return sms, f"Not yet contacted: {who}", f"{who} arrived {age} and nobody has reached out yet.\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
     if rule == "cadence":
         last = _rel(lead.get("last_touch_at"), now)
         if payload.get("final"):
-            sms = f"Last follow-up on our list for {who}, last touched {last}. {contact}. Reply W 8500 if won (with the value), L if lost, K to keep trying."
-            return sms, f"Last follow-up: {who}", f"{who}: last touched {last}.\n{contact}\n\nIf it's done, mark it Won (with the value) or Lost, or keep trying.\nOpen: {url}"
-        sms = f"Follow up with {who}, last touched {last}. {contact}. {CODES_FULL}"
-        return sms, f"Follow up: {who}", f"{who}: last touched {last}.\n{contact}\n\nOpen: {url}"
+            sms = f"Last follow-up on our list for {who}, last touched {last}. Won, lost, or keep trying? Tap: {link}"
+            return sms, f"Last follow-up: {who}", f"{who}: last touched {last}.\n{_contact_line(lead, tenant)}\n\nIf it's done, mark it Won (with the value) or Lost, or plan the next step.\nOpen: {url}"
+        sms = f"Follow up with {who}, last touched {last}. {phone}Tap to log what happened: {link}"
+        return sms, f"Follow up: {who}", f"{who}: last touched {last}.\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
     if rule == "reply_nudge":
-        sms = f"{who} replied {_rel(lead.get('last_reply_at'), now)} and hasn't heard back. {contact}. Reply 2 when you've texted back."
-        return sms, f"Waiting on you: {who}", f"{who} replied and hasn't heard back yet.\nThey said: {payload.get('text', '')}\n{contact}\n\nOpen: {url}"
+        how = "by email" if payload.get("channel") == "email" else ""
+        sms = f"{who} replied {how}{' ' if how else ''}{_rel(lead.get('last_reply_at'), now)} and hasn't heard back. Tap to answer: {link}"
+        return sms, f"Waiting on you: {who}", f"{who} replied and hasn't heard back yet.\nThey said: {payload.get('text', '')}\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
     if rule == "replied":
         text = payload.get("text", "")
-        sms = f"{who} replied: \"{text[:160]}\". Respond now. {contact}."
-        return sms, f"{who} replied", f"{who} just replied:\n\n{text}\n\n{contact}\nOpen: {url}"
+        how = " by email" if payload.get("channel") == "email" else ""
+        sms = f"{who} replied{how}: \"{text[:140]}\". Tap to answer: {link}"
+        subj = f"{who} replied{how}" + (f": {payload['subject']}" if payload.get("subject") else "")
+        return sms, subj, f"{who} just replied{how}:\n\n{text}\n\n{_contact_line(lead, tenant)}\nOpen: {url}"
     if rule == "resubmit":
-        sms = f"{who} submitted a form again. {contact}."
-        return sms, f"Submitted again: {who}", f"{who} just submitted another form.\n{contact}\n\nOpen: {url}"
+        sms = f"{who} submitted a form again. {phone}Tap: {link}"
+        return sms, f"Submitted again: {who}", f"{who} just submitted another form.\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
     if rule == "close_loop":
-        sms = f"Did the quote for {who} close? Reply W 8500 (won, with the value) or L (lost)."
+        sms = f"Did the quote for {who} close? Tap to mark it won or lost: {link}"
         return sms, f"Did it close? {who}", f"The quote for {who} went out a while ago. Mark it Won with the job value, or Lost.\n\nOpen: {url}"
     if rule == "snoozed":
-        sms = f"Snooze over: follow up with {who}. {contact}. {CODES_FULL}"
-        return sms, f"Snooze over: {who}", f"Time to follow up with {who}.\n{contact}\n\nOpen: {url}"
-    return f"{who}: {contact}", who, f"{who}\n{contact}\n\nOpen: {url}"
+        sms = f"Time to follow up with {who}. {phone}Tap: {link}"
+        return sms, f"Follow up: {who}", f"Time to follow up with {who}.\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
+    return f"{who}. Tap: {link}", who, f"{who}\n{_contact_line(lead, tenant)}\n\nOpen: {url}"
 
 
 def _escalation_text(lead: dict, tenant: dict, payload: dict, now: datetime) -> tuple[str, str, str]:
@@ -450,7 +483,7 @@ def relay_enabled(tenant: dict) -> bool:
 
 def relay_text(lead: dict, text: str) -> str:
     name = lead.get("contact_name") or format_phone_display(lead.get("phone_e164")) or "Lead"
-    return f"[{lead['ref_code']}] {name}: {text}\n\nReply to this text to answer them. Codes 1-5, W, L, K, N still work."
+    return f"[{lead['ref_code']}] {name}: {text}\n\nReply to this text to answer them."
 
 
 def _relay_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict, reminder_id: UUID, text: str, subject: str, email_text: str, html: str) -> bool:
@@ -558,8 +591,11 @@ def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_
                 continue
             sent_any = _send_to_user(conn, user, tenant, lead, r["id"], "alert" if rule in ("new_alert", "replied", "resubmit") else "reminder", sms, subject, text, html) or sent_any
         conn.execute("UPDATE reminder SET sent_at = %s WHERE id = %s", (now, r["id"]))
-        if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed", "after_appointment"):
+        if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed", "after_appointment", "next_step"):
             lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.REMINDER_SENT, body=subject, detail={"rule": rule, **payload, "delivered": sent_any}, occurred_at=now)
+        if rule in ("next_step", "after_appointment"):
+            conn.execute("UPDATE lead SET next_action_at = %s WHERE id = %s", (now, lead["id"]))
+            _schedule_cadence(conn, tenant, lead, now, tag=rule)
         if rule == "cadence":
             conn.execute("UPDATE lead SET next_action_at = %s WHERE id = %s", (now, lead["id"]))
             _maybe_escalate_ignored(conn, tenant, lead, now)
@@ -587,10 +623,13 @@ def _maybe_escalate_ignored(conn: psycopg.Connection, tenant: dict, lead: dict, 
 
 NEEDS_ACTION = """
     NOT (l.flags ? 'needs_review') AND l.status NOT IN ('won', 'lost') AND (
-        l.status = 'new'
-        OR (l.status IN ('contacted', 'no_response') AND COALESCE(l.last_touch_at, l.created_at) < %s - interval '1 day')
-        OR (l.status = 'quoted' AND COALESCE(l.quoted_at, l.created_at) < %s - interval '7 days')
-        OR (l.next_action_at IS NOT NULL AND l.next_action_at <= %s)
+        (l.next_step_at IS NOT NULL AND l.next_step_at <= %s)
+        OR (l.next_step_at IS NULL AND (
+            l.status = 'new'
+            OR (l.status IN ('contacted', 'no_response') AND COALESCE(l.last_touch_at, l.created_at) < %s - interval '1 day')
+            OR (l.status = 'quoted' AND COALESCE(l.quoted_at, l.created_at) < %s - interval '7 days')
+            OR (l.next_action_at IS NOT NULL AND l.next_action_at <= %s)
+        ))
     )
 """
 
@@ -615,7 +654,7 @@ def run_digests(conn: psycopg.Connection, *, now: datetime | None = None) -> int
             if already:
                 continue
             where = NEEDS_ACTION
-            params: list[Any] = [now, now, now, tenant["id"]]
+            params: list[Any] = [now, now, now, now, tenant["id"]]
             sql = f"SELECT l.* FROM lead l WHERE {where} AND l.tenant_id = %s"
             if not user.get("see_all_leads", True) and user["role"] != Role.OWNER.value:
                 sql += " AND l.assigned_to = %s"
@@ -706,12 +745,45 @@ class ReplyOutcome:
     handled: bool = False
 
 
+def _last_reminded_lead(conn: psycopg.Connection, user: dict, tenant: dict) -> dict | None:
+    last = conn.execute("SELECT lead_id FROM reminder WHERE user_id = %s AND sent_at IS NOT NULL ORDER BY sent_at DESC LIMIT 1", (user["id"],)).fetchone()
+    if last is None:
+        last = conn.execute("SELECT lead_id FROM reminder r JOIN lead l ON l.id = r.lead_id WHERE l.tenant_id = %s AND r.sent_at IS NOT NULL ORDER BY r.sent_at DESC LIMIT 1", (tenant["id"],)).fetchone()
+    return conn.execute("SELECT * FROM lead WHERE id = %s", (last["lead_id"],)).fetchone() if last else None
+
+
+def apply_text_reply(conn: psycopg.Connection, user: dict, text: str, *, now: datetime | None = None) -> ReplyOutcome:
+    """A client texted the alert number back. The old one-letter codes still work for anyone who learned them;
+    anything else is kept as a note on the lead the alert was about, and the reply points at the tap link."""
+    now = now or datetime.now(UTC)
+    tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (user["tenant_id"],)).fetchone() if user.get("tenant_id") else None
+    if tenant is None:
+        return ReplyOutcome("This number sends lead alerts; open the link in the alert to update a lead.")
+    if looks_like_code(text):
+        return apply_reply_code(conn, user, text, now=now)
+    m = re.match(r"^\s*([A-Za-z]\d{3})\b[\s:,-]*(.*)$", text or "", re.S)
+    lead = None
+    body = (text or "").strip()
+    if m:
+        lead = conn.execute("SELECT * FROM lead WHERE tenant_id = %s AND ref_code = %s", (tenant["id"], m.group(1).upper())).fetchone()
+        if lead is not None:
+            body = m.group(2).strip()
+    if lead is None:
+        lead = _last_reminded_lead(conn, user, tenant)
+    if lead is None or not body:
+        return ReplyOutcome("Open the link in the alert text to update that lead.")
+    lead_svc.add_note(conn, lead, body, actor_id=user["id"], actor_label=user["name"])
+    acknowledge(conn, lead["id"])
+    name = lead.get("contact_name") or lead["ref_code"]
+    return ReplyOutcome(f"Noted on {name} ({lead['ref_code']}). To log a call, a quote or what's next, tap: {open_link(lead['id'], user['id'])}", lead["id"], True)
+
+
 def apply_reply_code(conn: psycopg.Connection, user: dict, text: str, *, now: datetime | None = None) -> ReplyOutcome:
     """A client texted a code back. Figure out which lead, do the thing, say what was done."""
     now = now or datetime.now(UTC)
     m = _CODE.match(text or "")
     if not m:
-        return ReplyOutcome("Codes: 1 called, 2 texted, 3 emailed, 4 snooze 1 day, 5 snooze 3 days, W 8500 won, L lost, K keep trying, N note. Start with the ref (e.g. A14 1) to pick a lead.")
+        return ReplyOutcome("Open the link in the alert text to update that lead.")
     ref, code, rest = (m.group("ref") or "").upper(), m.group("code").upper(), (m.group("rest") or "").strip()
     tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (user["tenant_id"],)).fetchone() if user.get("tenant_id") else None
     if tenant is None:
@@ -764,7 +836,7 @@ def apply_reply_code(conn: psycopg.Connection, user: dict, text: str, *, now: da
         lead_svc.add_note(conn, lead, rest, actor_id=user["id"], actor_label=label)
         acknowledge(conn, lead["id"])
         return ReplyOutcome(f"Note added to {name} ({lead['ref_code']}).", lead["id"], True)
-    return ReplyOutcome("Codes: 1 called, 2 texted, 3 emailed, 4 snooze 1 day, 5 snooze 3 days, W 8500 won, L lost, K keep trying, N note.", lead["id"])
+    return ReplyOutcome(f"To update {name}, tap: {open_link(lead['id'], user['id'])}", lead["id"])
 
 
 def apply_action(conn: psycopg.Connection, user: dict, lead: dict, action: str, *, now: datetime | None = None, deal_value: Decimal | None = None, lost_reason: LostReason | None = None) -> str:

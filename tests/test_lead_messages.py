@@ -163,11 +163,14 @@ def test_appointment_confirms_to_the_lead_and_pauses_reminders(client, setup, lo
     lead = admin_conn.execute("SELECT status, appointment_at FROM lead WHERE id = %s", (lead_id,)).fetchone()
     assert lead["status"] == "contacted" and lead["appointment_at"] == when.astimezone(UTC)
     rules = [r["rule"] for r in admin_conn.execute("SELECT rule FROM reminder WHERE lead_id = %s AND sent_at IS NULL AND cancelled_at IS NULL ORDER BY due_at", (lead_id,))]
-    assert rules[0] == "after_appointment" and rules.count("cadence") == 4 and "nudge" not in rules
+    assert rules == ["after_appointment"]  # nothing nags until after the visit; the cadence resumes once the prompt goes out
+    assert admin_conn.execute("SELECT next_step, next_step_at FROM lead WHERE id = %s", (lead_id,)).fetchone() == {"next_step": "appointment", "next_step_at": when.astimezone(UTC)}
     outbox.clear()
     with system_db() as conn:
         followup.dispatch_due(conn, now=when.astimezone(UTC) + timedelta(hours=4))
-    assert any("How did the appointment with Mike Reynolds" in m["body"] for m in outbox.sms)
+    assert any("How did the visit go? Mike Reynolds" in m["body"] and "/go/" in m["body"] for m in outbox.sms)
+    rules = [r["rule"] for r in admin_conn.execute("SELECT rule FROM reminder WHERE lead_id = %s AND sent_at IS NULL AND cancelled_at IS NULL ORDER BY due_at", (lead_id,))]
+    assert rules.count("cadence") == 4  # the usual follow-ups pick up after the visit until something is logged
     # Clearing it.
     r = client.post(f"/leads/{lead_id}/appointment", data={"when": "", "csrf_token": csrf}, headers={"HX-Request": "true"})
     assert admin_conn.execute("SELECT appointment_at FROM lead WHERE id = %s", (lead_id,)).fetchone()["appointment_at"] is None

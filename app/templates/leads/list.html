@@ -39,6 +39,8 @@
       {% if l.status == 'won' and l.deal_value %}<span class="chip">{{ l.deal_value | money }}</span>{% endif %}
       {% if l.assignee_name %}<span class="dim" style="font-size:12px">{{ l.assignee_name.split(' ')[0] }}</span>{% endif %}
     </div>
+    {% set nx = nexts.get(l.id) %}
+    {% if nx and l.status not in ('won', 'lost') %}<div class="next {{ 'due' if nx.overdue else '' }}">Next: {{ nx.label | lower }} {{ nx.when }}{% if nx.note %} <span class="dim">— {{ nx.note }}</span>{% endif %}</div>{% endif %}
   </a>
   {% endfor %}
 </div>

@@ -243,6 +243,26 @@ def login(email: str, password: str, request: Request | None = None) -> tuple[di
     return user, crypto.sign_session_id(str(session["id"]))
 
 
+def login_from_link(user_id: UUID, request: Request | None = None) -> tuple[dict, str] | None:
+    """A signed link from an alert text opens a session on that phone without a password: the text
+    reached the mobile number on the account, which is the same factor a reset code would use. The
+    authenticator (if the user has one) is still asked for, as after a normal sign-in."""
+    settings = get_settings()
+    ip, ua = _ip(request), (request.headers.get("user-agent", "")[:300] if request else None)
+    now = datetime.now(UTC)
+    with system_db() as conn:
+        user = conn.execute("SELECT * FROM app_user WHERE id = %s AND is_active", (user_id,)).fetchone()
+        if user is None or (user["locked_until"] and user["locked_until"] > now):
+            return None
+        conn.execute("UPDATE app_user SET last_login_at = %s WHERE id = %s", (now, user["id"]))
+        session = conn.execute(
+            "INSERT INTO session (user_id, tenant_id, mfa_passed, ip, user_agent, expires_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
+            (user["id"], user["tenant_id"], not user["totp_enabled"] and user["role"] == Role.MEMBER.value, ip, ua, now + timedelta(hours=settings.session_ttl_hours)),
+        ).fetchone()
+        audit(conn, action="login_link", user_id=user["id"], tenant_id=user["tenant_id"], ip=ip)
+    return user, crypto.sign_session_id(str(session["id"]))
+
+
 def logout(session_id: UUID) -> None:
     with system_db() as conn:
         conn.execute("UPDATE session SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL", (session_id,))

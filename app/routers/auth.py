@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse, Response
 
 from app import web
-from app.auth import service
+from app.auth import crypto, service
 from app.auth.deps import check_csrf, get_principal, require_password_only, require_user
 from app.auth.service import AuthError, Principal
 from app.config import get_settings
@@ -47,6 +47,26 @@ def _next_step(principal: Principal, next_url: str) -> str:
     if principal.user["must_set_password"]:
         return "/login/set-password"
     return next_url
+
+
+@router.get("/go/{token}")
+def open_from_text(request: Request, token: str, principal: Annotated[Principal | None, Depends(get_principal)] = None):
+    """The link in every alert text: opens that lead, signing the user in on this phone if needed."""
+    ids = crypto.read_short_token(token, salt="go")
+    if ids is None:
+        return web.render(request, "auth/login.html", status_code=400, next="/leads", error="That link has expired. Sign in to see your leads.", email="")
+    lead_id, user_id = ids
+    target = f"/leads/{lead_id}#outcome"
+    if principal is not None and principal.user_id == user_id:
+        return RedirectResponse(_next_step(principal, target), status_code=303)
+    opened = service.login_from_link(user_id, request)
+    if opened is None:
+        return web.render(request, "auth/login.html", status_code=400, next=target, error="That link no longer works. Sign in to see your leads.", email="")
+    user, cookie = opened
+    fresh = service.load_principal(cookie)
+    response = RedirectResponse(_next_step(fresh, target) if fresh else target, status_code=303)
+    _set_cookie(response, cookie)
+    return response
 
 
 @router.get("/login")

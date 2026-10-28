@@ -37,7 +37,7 @@ ACK_WINDOW = timedelta(hours=24)  # after this an acknowledgement would be odd
 TEMPLATES = {
     "ack": "Thanks {first_name}, this is {assignee_first_name} at {client_name}. Got {request}, I'll call you shortly. Reply STOP to opt out.",
     "decline": "Thanks for reaching out. Unfortunately {job_address} is outside the area we serve, so we can't help with this one. Sorry to miss it.",
-    "appointment": "Hi {first_name}, {assignee_first_name} from {client_name} will be there {appointment_day} at {appointment_time} to look at {job}. If you need to reschedule, {reschedule}.",
+    "appointment": "Hi {first_name}, {assignee_first_name} from {client_name} {appointment_verb} {appointment_day} at {appointment_time} {appointment_about}. If you need to reschedule, {reschedule}.",
     # What the Text button pre-fills the first time someone texts a lead. Not sent automatically.
     "intro": "Hi {first_name}, thanks for reaching out about {job}. When would be a convenient time to connect and go over what you need? Let me know and we'll get something set up right away. Thanks, {your_name}",
 }
@@ -65,6 +65,8 @@ PLACEHOLDERS = {
     "job": "'your roof replacement' or 'the job'",
     "appointment_day": "'Tuesday, Oct 21' (or 'tomorrow' / 'today')",
     "appointment_time": "'2:30 PM'",
+    "appointment_verb": "'will be there' for site visits, 'will call you' for calls (the client's appointment setting)",
+    "appointment_about": "'to look at your roof' for site visits, 'about your roof' for calls",
     "reschedule": "'reply to this text or call 705 555 0100' depending on what the client has",
 }
 
@@ -144,6 +146,10 @@ def context(conn: psycopg.Connection, tenant: dict, lead: dict, *, user: dict | 
         time_ = local.strftime("%-I:%M %p")
     phone = tenant.get("twilio_number")
     reschedule = f"reply to this text or call {format_phone_display(phone)}" if phone else "just reply to this text"
+    from app.services import outcomes
+
+    kind = outcomes.appointment_kind(tenant)
+    words = outcomes.appointment_words(tenant)
     return {
         "first_name": _first(lead.get("contact_name")),
         "name": (lead.get("contact_name") or "").strip(),
@@ -158,6 +164,8 @@ def context(conn: psycopg.Connection, tenant: dict, lead: dict, *, user: dict | 
         "job": f"your {job_type.lower()}" if job_type else "the job",
         "appointment_day": day,
         "appointment_time": time_,
+        "appointment_verb": words["verb"] or "will be there",
+        "appointment_about": (f"to look at your {job_type.lower()}" if job_type else "to take a look") if kind != "call" else (f"about your {job_type.lower()}" if job_type else "about your request"),
         "reschedule": reschedule,
     }
 
@@ -287,26 +295,31 @@ def decline_now(conn: psycopg.Connection, tenant: dict, lead: dict, *, actor_id:
 def set_appointment(conn: psycopg.Connection, tenant: dict, lead: dict, when: datetime | None, *, actor_id: UUID | None, actor_label: str, now: datetime | None = None) -> str:
     now = now or datetime.now(UTC)
     tz = followup.tz_for(tenant)
+    from app.services import outcomes
+
+    what = outcomes.appointment_words(tenant)["next"] or "Appointment"
     if when is None:
-        conn.execute("UPDATE lead SET appointment_at = NULL WHERE id = %s", (lead["id"],))
+        conn.execute("UPDATE lead SET appointment_at = NULL, next_step = CASE WHEN next_step = 'appointment' THEN NULL ELSE next_step END, next_step_at = CASE WHEN next_step = 'appointment' THEN NULL ELSE next_step_at END WHERE id = %s", (lead["id"],))
         followup.cancel(conn, lead["id"], ("appointment", "after_appointment"))
-        lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.APPOINTMENT, actor_id=actor_id, actor_label=actor_label, body="Appointment cleared")
-        return "Appointment cleared."
-    conn.execute("UPDATE lead SET appointment_at = %s WHERE id = %s", (when, lead["id"]))
+        lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.APPOINTMENT, actor_id=actor_id, actor_label=actor_label, body=f"{what} cleared")
+        return f"{what} cleared."
+    conn.execute(
+        "UPDATE lead SET appointment_at = %s, next_step = 'appointment', next_step_at = %s, next_step_note = NULL, next_action_at = %s, snoozed_until = NULL WHERE id = %s",
+        (when, when, when, lead["id"]),
+    )
     pretty = when.astimezone(tz).strftime("%a %b %-d, %-I:%M %p")
-    lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.APPOINTMENT, actor_id=actor_id, actor_label=actor_label, body=f"Appointment set for {pretty}", detail={"at": when.isoformat()})
-    # Setting a date is contact; pause the cadence until after the visit and ask how it went.
-    if lead["status"] == LeadStatus.NEW.value:
+    lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.APPOINTMENT, actor_id=actor_id, actor_label=actor_label, body=f"{what} booked for {pretty}", detail={"at": when.isoformat(), "kind": outcomes.appointment_kind(tenant)})
+    # Booking is contact; nothing else is due until after it, then we ask how it went.
+    if lead["status"] in (LeadStatus.NEW.value, LeadStatus.NO_RESPONSE.value):
         lead_svc.change_status(conn, lead, LeadStatus.CONTACTED, actor_id=actor_id, actor_label=actor_label, now=now)
-    followup.cancel(conn, lead["id"], ("nudge", "cadence", "reply_nudge", "snoozed", "appointment", "after_appointment", "escalation"))
+    followup.cancel(conn, lead["id"], ("nudge", "cadence", "reply_nudge", "snoozed", "close_loop", "next_step", "appointment", "after_appointment", "escalation"))
     followup.acknowledge(conn, lead["id"])
     followup.schedule(conn, tenant_id=tenant["id"], lead_id=lead["id"], user_id=lead.get("assigned_to"), rule="after_appointment", due_at=followup.next_business_time(when + timedelta(hours=3), tenant), key=f"{lead['id']}:after_appointment:{followup._ts(when)}")
-    followup._schedule_cadence(conn, tenant, lead, when + timedelta(hours=3))
     cfg = settings_for(tenant)
     if cfg["appointment"] and can_reach(tenant, lead) and lead.get("channel") != Channel.IMPORT.value and when > now:
         followup.schedule(conn, tenant_id=tenant["id"], lead_id=lead["id"], user_id=None, rule="appointment", due_at=now, key=f"{lead['id']}:appointment:{followup._ts(when)}")
-        return f"Appointment set for {pretty}; confirmation on its way to them."
-    return f"Appointment set for {pretty}."
+        return f"{what} {pretty}; confirmation on its way to them."
+    return f"{what} {pretty}."
 
 
 def connect_token(lead_id: UUID, user_id: UUID) -> str:

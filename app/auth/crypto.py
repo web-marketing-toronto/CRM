@@ -6,6 +6,9 @@ import base64
 import hashlib
 import hmac
 import secrets
+import struct
+import time
+from uuid import UUID
 
 import pyotp
 from argon2 import PasswordHasher
@@ -134,3 +137,31 @@ def read_signed_token(token: str, salt: str, max_age_seconds: int) -> dict | Non
         return URLSafeTimedSerializer(get_settings().secret_key, salt=salt).loads(token, max_age=max_age_seconds)
     except BadSignature:
         return None
+
+
+# --- Compact links for texts ---------------------------------------------------------------------
+# 16-byte lead id + 16-byte user id + 4-byte expiry, base64url (48 chars), then a 12-byte HMAC tag
+# (16 chars): ~65 characters, short enough to ride in an SMS alongside the message.
+
+def short_token(lead_id: UUID | str, user_id: UUID | str, *, salt: str, ttl_seconds: int = 7 * 24 * 3600) -> str:
+    exp = int(time.time()) + ttl_seconds
+    body = UUID(str(lead_id)).bytes + UUID(str(user_id)).bytes + struct.pack(">I", exp)
+    tag = hmac.new(get_settings().secret_key.encode(), salt.encode() + b"\0" + body, hashlib.sha256).digest()[:12]
+    return base64.urlsafe_b64encode(body + tag).decode().rstrip("=")
+
+
+def read_short_token(token: str, *, salt: str) -> tuple[UUID, UUID] | None:
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except (ValueError, TypeError):
+        return None
+    if len(raw) != 48:
+        return None
+    body, tag = raw[:36], raw[36:]
+    want = hmac.new(get_settings().secret_key.encode(), salt.encode() + b"\0" + body, hashlib.sha256).digest()[:12]
+    if not hmac.compare_digest(tag, want):
+        return None
+    exp = struct.unpack(">I", body[32:36])[0]
+    if exp < time.time():
+        return None
+    return UUID(bytes=body[:16]), UUID(bytes=body[16:32])

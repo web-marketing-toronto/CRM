@@ -101,7 +101,7 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
                 lead, message = followup.relay_target(conn, user, tenant, body)
                 if lead is None:
                     messaging.record_inbound_sms(conn, tenant_id=tenant["id"], lead_id=None, user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
-                    return _twiml("Which lead is that for? Start with their ref, e.g. A14 Yes, Tuesday works. (1-5, W, L, K, N are still the codes.)")
+                    return _twiml("Which lead is that for? Start with their ref, e.g. A14 Yes, Tuesday works.")
                 messaging.record_inbound_sms(conn, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
                 try:
                     lead_messages.send_text(conn, tenant, lead, message, actor_id=user["id"], actor_label=user["name"], via="phone")
@@ -109,7 +109,7 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
                     return _twiml(f"Not sent to {lead.get('contact_name') or lead['ref_code']}: {exc}")
                 return _twiml()  # no confirmation text: the thread on their phone already shows it
             messaging.record_inbound_sms(conn, tenant_id=user["tenant_id"], lead_id=None, user_id=user["id"], from_=from_, to=to, body=body, provider_id=sid)
-            outcome = followup.apply_reply_code(conn, user, body)
+            outcome = followup.apply_text_reply(conn, user, body)
             if outcome.lead_id and outcome.handled:
                 background.add_task(worker.dispatch_lead_now, outcome.lead_id)
             return _twiml(outcome.reply)
@@ -117,7 +117,7 @@ async def inbound_sms(request: Request, background: BackgroundTasks):
         if tenant is None:
             if is_agency_number:
                 messaging.record_inbound_sms(conn, tenant_id=None, lead_id=None, user_id=None, from_=from_, to=to, body=body, provider_id=sid)
-                return _twiml(f"This number sends lead alerts for {settings.agency_name}. Reply codes only work from the mobile number on your account.")
+                return _twiml(f"This number sends lead alerts for {settings.agency_name}. Open the link in an alert to update a lead.")
             log.warning("text to an unknown number %s from %s", to, from_)
             return _twiml()
 

@@ -236,6 +236,14 @@
         <label class="day"><input type="checkbox" name="msg_auto_decline" {{ 'checked' if lead_msg.auto_decline else '' }}> Automatic out-of-area decline</label>
         <label class="day"><input type="checkbox" name="msg_appointment" {{ 'checked' if lead_msg.appointment else '' }}> Appointment confirmations</label>
       </div>
+      <div class="field" style="margin-top:8px"><label for="appointment_kind">Appointments this client books</label>
+        <select id="appointment_kind" name="appointment_kind">
+          <option value="visit" {{ 'selected' if appointment_kind == 'visit' else '' }}>Site visits (contractors: "Dan will be there Tue at 2:30 to look at your roof")</option>
+          <option value="call" {{ 'selected' if appointment_kind == 'call' else '' }}>Calls ("Jeffrey will call you Tue at 2:30 about your request")</option>
+          <option value="off" {{ 'selected' if appointment_kind == 'off' else '' }}>Off (no booking option on leads)</option>
+        </select>
+        <div class="dim" style="font-size:13px">Sets the "Booked…" outcome and next step on every lead, the wording of the confirmation text, and the "how did it go?" prompt afterwards.</div>
+      </div>
       <div class="field"><label for="lead_reply_to" class="dim" style="font-weight:500">Reply-to address for emails to leads <span class="dim">(blank = the owner's login email)</span></label><input id="lead_reply_to" name="lead_reply_to" type="email" value="{{ lead_msg.reply_to }}" placeholder="dan@northridgeroofing.ca"></div>
       <div class="field"><label for="tpl_ack" class="dim" style="font-weight:500">Acknowledgement</label><textarea id="tpl_ack" name="tpl_ack" style="min-height:70px" placeholder="{{ lead_msg_default_templates.ack }}">{{ lead_msg.templates.ack if lead_msg.templates.ack != lead_msg_default_templates.ack else '' }}</textarea></div>
       <div class="field"><label for="tpl_decline" class="dim" style="font-weight:500">Out-of-area decline</label><textarea id="tpl_decline" name="tpl_decline" style="min-height:70px" placeholder="{{ lead_msg_default_templates.decline }}">{{ lead_msg.templates.decline if lead_msg.templates.decline != lead_msg_default_templates.decline else '' }}</textarea></div>

@@ -78,7 +78,7 @@ def test_unknown_number_becomes_a_lead(client, make_tenant, make_user, admin_con
 def test_text_to_agency_number_from_stranger(client, make_tenant, make_user, admin_conn):
     _setup(make_tenant, make_user, admin_conn)
     r = _post(client, {"From": "+16475550000", "To": "+14165550000", "Body": "hello", "MessageSid": "SM7"})
-    assert r.status_code == 200 and "Reply codes only work" in r.text
+    assert r.status_code == 200 and "Open the link in an alert" in r.text
     assert admin_conn.execute("SELECT count(*) AS n FROM lead").fetchone()["n"] == 0
 
 
@@ -137,7 +137,7 @@ def test_relay_off_means_agency_alert_and_codes_only(client, make_tenant, make_u
     alert = [m for m in outbox.sms if m["to"] == "+17055551000"]
     assert len(alert) == 1 and alert[0]["from"] == "+14165550000" and "replied" in alert[0]["body"]
     r = _post(client, {"From": "+17055551000", "To": "+17055550000", "Body": "Great, see you Tuesday", "MessageSid": "R7"})
-    assert r.text.count("<Message>") == 1 and "Codes:" in r.text  # treated as a (bad) code, nothing relayed
+    assert r.text.count("<Message>") == 1 and "Noted on Mike (A001)" in r.text and "/go/" in r.text  # kept as a note, nothing relayed to the lead
 
 
 def test_calls_to_the_texting_number_ring_the_client(client, make_tenant, make_user, admin_conn, outbox):
@@ -196,7 +196,7 @@ def test_alerts_point_at_the_app_not_the_raw_number_when_the_client_has_a_busine
     t, owner = _setup(make_tenant, make_user, admin_conn)
     client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Mike", "phone": "7055550142"})
     alert = next(m for m in outbox.sms if m["to"] == "+17055551000")
-    assert "Call or text from http://testserver/leads/" in alert["body"] and "(705) 555-0142" not in alert["body"]
+    assert "http://testserver/go/" in alert["body"] and "(705) 555-0142" not in alert["body"]
 
 
 def test_office_line_rings_with_the_mobile_or_in_turn(client, make_tenant, make_user, admin_conn, outbox):
