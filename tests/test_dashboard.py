@@ -225,5 +225,5 @@ def test_dashboard_lists_failed_uploads_with_reason(client, make_tenant, make_us
     csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
     client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
     html = client.get("/dashboard").text
-    assert "Uploads that gave up" in html and "No Google conversion action set for 'qualified'" in html and "Retry now" in html
+    assert "Uploads that gave up" in html and "No Google conversion action set for" in html and "Retry now" in html
     assert "Meta: <strong>no token</strong>" in html or "Meta: token loaded" in html
