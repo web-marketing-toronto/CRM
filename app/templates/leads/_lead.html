@@ -85,7 +85,9 @@
       {% endif %}
       {% if lead.email %}
       {% set mail_icon %}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="m22 6-10 7L2 6"/></svg>{% endset %}
-      {% if email_links.choice == 'gmail' %}
+      {% if email_links.choice == 'here' and can_email %}
+      <a class="act" href="#email-box" onclick="document.querySelector('#email-box textarea').focus(); return false;">{{ mail_icon }}Email <small>from here</small></a>
+      {% elif email_links.choice == 'gmail' %}
       <a class="act" href="{{ email_links.gmail }}" target="_blank" rel="noopener" data-touch="email">{{ mail_icon }}Email <small>Gmail</small></a>
       {% elif email_links.choice == 'outlook' %}
       <a class="act" href="{{ email_links.outlook }}" target="_blank" rel="noopener" data-touch="email">{{ mail_icon }}Email <small>Outlook</small></a>
@@ -95,12 +97,13 @@
       <details class="act-menu">
         <summary class="act">{{ mail_icon }}Email <small>{{ lead.email }}</small></summary>
         <div class="menu">
+          {% if can_email %}<a href="#email-box" onclick="document.querySelector('#email-box textarea').focus(); this.closest('details').removeAttribute('open'); return false;"><strong>Send from here</strong>{% if email_tracked %} · replies land on this lead{% endif %}</a>{% endif %}
           <a href="{{ email_links.gmail }}" target="_blank" rel="noopener" data-touch="email">Gmail in the browser</a>
           <a href="{{ email_links.outlook }}" target="_blank" rel="noopener" data-touch="email">Outlook on the web</a>
           <a href="{{ email_links.mailto }}" data-touch="email">Mail app on this device</a>
           <form method="post" action="/account/email-client"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next" value="/leads/{{ lead.id }}">
             <span class="dim">Always use:</span>
-            <button type="submit" name="email_client" value="gmail">Gmail</button> · <button type="submit" name="email_client" value="outlook">Outlook</button> · <button type="submit" name="email_client" value="mailto">Mail app</button>
+            {% if can_email %}<button type="submit" name="email_client" value="here">From here</button> · {% endif %}<button type="submit" name="email_client" value="gmail">Gmail</button> · <button type="submit" name="email_client" value="outlook">Outlook</button> · <button type="submit" name="email_client" value="mailto">Mail app</button>
           </form>
         </div>
       </details>
@@ -111,6 +114,18 @@
     </div>
     <div class="hint">{% if can_text %}Call rings you first, then {{ (lead.contact_name or 'them').split(' ')[0] }}. Calls and texts go through {{ texting_number | phone }}, so they only ever see the business number; the thread stays here whichever phone you use.{% else %}Tapping logs the attempt and moves a new lead to Contacted.{% endif %}{% if intro %} Text starts with your first-text wording{% if principal.role.value in ('owner', 'agency_admin') %} (<a href="/messages">change it</a>){% endif %}.{% endif %}{% if lead.last_touch_at %} Last touched {{ lead.last_touch_at | relative }}.{% endif %}</div>
   </div>
+
+  {% if lead.email and can_email and lead.status not in ('won', 'lost') %}
+  <div>
+    <form class="note-form email-form" id="email-box" method="post" action="/leads/{{ lead.id }}/email" hx-post="/leads/{{ lead.id }}/email" hx-target="#lead" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="subject" type="text" value="{{ email_links.subject }}" aria-label="Subject" style="flex-basis:100%">
+      <textarea name="body" placeholder="Email {{ (lead.contact_name or 'them').split(' ')[0] }} from here…" required maxlength="6000">{{ intro }}</textarea>
+      <button class="btn hivis" type="submit">Send email</button>
+    </form>
+    <div class="hint">Goes to {{ lead.email }} as "{{ principal.user.name.split(' ')[0] }} at {{ principal.tenant.name }}"{% if email_tracked %}; their reply shows up below and alerts you{% else %}; replies go to your usual inbox{% endif %}.</div>
+  </div>
+  {% endif %}
 
   {% if lead.status not in ('won', 'lost') and not lead.flags.needs_review %}
   <div id="outcome" class="outcome {{ 'hot' if pending_touch or ask_next else '' }}">
@@ -287,10 +302,11 @@
             {% elif a.type == 'conversion_sent' %}{% if a.detail.status == 'failed' %}Not sent to {{ 'Google Ads' if a.detail.platform == 'google_ads' else 'Meta' }} <span class="who">{{ a.body }}</span>{% else %}Sent to ad platform <span class="who">{{ a.body }}</span>{% endif %}
             {% elif a.type == 'call_attempt' and a.detail.kind == 'crm_call' %}Called through the CRM <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
             {% elif a.type == 'text_sent' and a.body and a.detail.kind == 'lead_text' %}Texted {{ 'from their phone' if a.detail.via == 'phone' else 'from the app' }} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>
+            {% elif a.type == 'email_sent' and a.detail.kind == 'lead_email' %}Emailed {{ 'from the app' if a.detail.via == 'app' else 'from their inbox' if a.detail.via == 'inbox' else 'from their mail app' }} <span class="who">by {{ a.actor_label.split(' ')[0] }}{% if a.detail.subject %} · {{ a.detail.subject }}{% endif %}{% if a.detail.delivered is false %} · not delivered{% endif %}</span>
             {% elif a.type == 'escalation' %}Escalated to {{ settings.agency_name }} <span class="who">{{ a.body }}</span>
             {% else %}{{ a.type | activity_label }}{% if a.actor_label != 'system' %} <span class="who">by {{ a.actor_label.split(' ')[0] }}</span>{% endif %}{% endif %}
           </div>
-          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent', 'outcome') and a.detail.kind != 'crm_call' %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
+          {% if a.body and a.type not in ('created', 'reminder_sent', 'escalation', 'appointment', 'conversion_sent', 'outcome') and a.detail.kind != 'crm_call' %}<div class="body {{ 'bubble out' if a.type in ('auto_message', 'text_sent') or (a.type == 'email_sent' and a.detail.kind == 'lead_email') else 'bubble in' if a.type == 'lead_replied' else '' }}">{{ a.body }}</div>{% endif %}
         </div>
         <div class="when">{{ a.occurred_at | relative }}</div>
       </li>

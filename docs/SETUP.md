@@ -303,6 +303,22 @@ The client's settings page shows how many leads carried an ad id and how many ad
 (deleted on the platform) or failing; the Dashboard's Pipes panel shows the latest failure reason. Failed
 lookups are retried every 6 hours; described ads are refreshed every 14 days.
 
+### Email conversations on a lead
+
+With the mailbox wired (the Email section above), every lead has its own address: the client's intake address
+with the lead's ref on the end (`crm+<slug>.<token>.a005@…`). It is used three ways, and the client
+never has to type it:
+
+* **Send from the CRM** (the Email button's first option, or the email box on the lead): the email goes out
+  from the CRM mailbox as "Dan at North Ridge Roofing" with the lead address as Reply-To. The customer's
+  reply lands on the lead ("They replied by email"), alerts the client by text and email, counts as
+  contact and resets the follow-up clock. The alert email's Reply-To is the lead address too, so answering
+  it from the inbox goes back through the CRM to the customer and is logged on the lead.
+* **Gmail / Outlook / the mail app**: the compose links BCC the lead address, so what the client sent is
+  kept on the lead (it fills in the "Emailed" line the button logged). Replies to those go to the client's
+  own inbox and are not seen; the Account page lets each user pick "Send from the CRM" as the default.
+* The minute poller tells the three cases apart by who wrote and who was in To/Cc; nothing to configure.
+
 ## 6b. Checking a deploy
 
 ```bash

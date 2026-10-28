@@ -17,7 +17,7 @@ from app.auth.service import Principal
 from app.config import get_settings
 from app.db import db
 from app.models import ActivityType, LeadStatus, LostReason, Platform
-from app.services import creatives, followup, lead_messages, outcomes
+from app.services import creatives, email_intake, followup, lead_messages, outcomes
 from app.services import leads as svc
 
 router = APIRouter(tags=["leads"])
@@ -118,18 +118,23 @@ def _load(principal: Principal, lead_id: UUID) -> dict:
 def svc_email_links(lead: dict, tenant: dict | None, principal: Principal, intro: str) -> dict:
     """Compose links for the Email button: the device's mail app, Gmail in the browser, Outlook on the web.
     The subject names the business and the job; the body starts with the first-text wording when the lead
-    hasn't been contacted yet."""
+    hasn't been contacted yet. The lead's CRM address rides along as BCC so the sent email is kept on the
+    lead (replies to those still go to the client's own inbox; sending from the app tracks both ways)."""
     from urllib.parse import quote, urlencode
+
+    from app.services import email_intake
 
     to = lead.get("email") or ""
     job = (lead.get("job_type") or "").strip().lower()
     subject = f"{(tenant or {}).get('name') or principal.tenant['name']}: your {job or 'request'}"
     body = intro or ""
-    q = {"subject": subject, "body": body}
+    bcc = email_intake.lead_address(tenant, lead) if tenant and email_intake.enabled() else None
+    q = {"subject": subject, "body": body, **({"bcc": bcc} if bcc else {})}
     return {
         "choice": principal.user.get("email_client") or "ask",
+        "subject": subject, "bcc": bcc,
         "mailto": f"mailto:{to}?" + urlencode(q, quote_via=quote),
-        "gmail": "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "to": to, "su": subject, "body": body}, quote_via=quote),
+        "gmail": "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "to": to, "su": subject, "body": body, **({"bcc": bcc} if bcc else {})}, quote_via=quote),
         "outlook": "https://outlook.office.com/mail/deeplink/compose?" + urlencode({"to": to, **q}, quote_via=quote),
     }
 
@@ -174,6 +179,8 @@ def _detail_context(principal: Principal, lead_id: UUID, *, request_flag: str | 
         "can_text": bool(full_tenant and full_tenant.get("twilio_number")), "texting_number": (full_tenant or {}).get("twilio_number"),
         "relay": bool(full_tenant and followup.relay_enabled(full_tenant)),
         "can_call": bool(full_tenant and full_tenant.get("twilio_number") and principal.user.get("mobile_e164")),
+        "can_email": bool(lead.get("email")) and get_settings().email_provider != "log",
+        "email_tracked": email_intake.enabled(),
     }
 
 
@@ -373,6 +380,21 @@ def next_step(
         except svc.LeadError as exc:
             return _respond(request, principal, lead_id, error=str(exc))
     background_dispatch(lead_id)
+    return _respond(request, principal, lead_id)
+
+
+@router.post("/leads/{lead_id}/email", dependencies=[Depends(check_csrf)])
+def email_lead(request: Request, lead_id: UUID, principal: Annotated[Principal, Depends(require_tenant)], subject: Annotated[str, Form()] = "", body: Annotated[str, Form()] = ""):
+    """An email typed in the app: sent from the CRM mailbox, replies tracked on the lead."""
+    with db(principal.tenant_id, principal.db_role) as conn:
+        lead = svc.get_lead(conn, lead_id)
+        if lead is None:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        tenant = conn.execute("SELECT * FROM tenant WHERE id = %s", (principal.tenant_id,)).fetchone()
+        try:
+            lead_messages.send_lead_email(conn, tenant, lead, subject, body, user=principal.user, actor_label=principal.label)
+        except svc.LeadError as exc:
+            return _respond(request, principal, lead_id, error=str(exc))
     return _respond(request, principal, lead_id)
 
 

@@ -19,7 +19,7 @@ import imaplib
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from email.utils import getaddresses, parsedate_to_datetime
 from typing import Any
@@ -60,24 +60,42 @@ def address_for(tenant: dict) -> str | None:
     return f"{local}+{tenant['slug']}.{token_for(tenant['slug'])}@{domain}"
 
 
-_ADDR = re.compile(r"^([^+@]+)\+([a-z0-9][a-z0-9-]{1,40})\.([0-9a-f]{12})@(.+)$", re.I)
+def lead_address(tenant: dict, lead: dict) -> str | None:
+    """A per-lead address: the client's intake address with the lead's ref on the end. Emails sent to the lead
+    carry it as Reply-To (and the compose links BCC it), so both directions of the conversation land here."""
+    base = address_for(tenant)
+    if not base:
+        return None
+    local, domain = base.split("@", 1)
+    return f"{local}.{str(lead['ref_code']).lower()}@{domain}"
+
+
+_ADDR = re.compile(r"^([^+@]+)\+([a-z0-9][a-z0-9-]{1,40})\.([0-9a-f]{12})(?:\.([a-z]\d{3}))?@(.+)$", re.I)
 
 
 def tenant_for_recipients(conn: psycopg.Connection, recipients: list[str]) -> tuple[dict | None, str | None]:
     """The client a message was addressed to, from any of its recipient addresses. (tenant, address)."""
+    tenant, addr, _lead = route_for_recipients(conn, recipients)
+    return tenant, addr
+
+
+def route_for_recipients(conn: psycopg.Connection, recipients: list[str]) -> tuple[dict | None, str | None, dict | None]:
+    """(tenant, address, lead): the lead is set when the address carries a lead ref."""
     s = get_settings()
     local, domain = (s.email_from or "@").lower().split("@", 1)
     for addr in recipients:
         m = _ADDR.match(addr.strip().lower())
-        if not m or m.group(1) != local or m.group(4) != domain:
+        if not m or m.group(1) != local or m.group(5) != domain:
             continue
-        slug, token = m.group(2), m.group(3)
+        slug, token, ref = m.group(2), m.group(3), m.group(4)
         if not hmac.compare_digest(token, token_for(slug)):
             continue
         tenant = conn.execute("SELECT * FROM tenant WHERE slug = %s AND is_active", (slug,)).fetchone()
-        if tenant is not None:
-            return tenant, addr.strip().lower()
-    return None, None
+        if tenant is None:
+            continue
+        lead = conn.execute("SELECT * FROM lead WHERE tenant_id = %s AND ref_code = %s", (tenant["id"], ref.upper())).fetchone() if ref else None
+        return tenant, addr.strip().lower(), lead
+    return None, None, None
 
 
 def recipients_of(msg: EmailMessage) -> list[str]:
@@ -174,6 +192,17 @@ def body_text(msg: EmailMessage) -> tuple[str, dict[str, str]]:
     if rich is not None:
         return html_to_text(markup), meta
     return "", meta
+
+
+_QUOTE_HEAD = re.compile(r"^(On .{5,120}wrote:|From: .+|-{2,}\s*Original Message\s*-{2,}|_{5,}|Sent from my .+)$", re.I | re.M)
+
+
+def reply_text(text: str) -> str:
+    """Just what the person typed: everything above the quoted message they replied to."""
+    m = _QUOTE_HEAD.search(text)
+    head = text[: m.start()] if m else text
+    lines = [ln for ln in head.splitlines() if not ln.lstrip().startswith(">")]
+    return "\n".join(lines).strip()
 
 
 def parse_fields(subject: str, text: str, *, exclude_emails: tuple[str, ...] = ()) -> dict[str, str]:
@@ -276,10 +305,11 @@ class PollResult:
     ignored: int = 0
     rejected: int = 0
     errors: int = 0
+    replies: int = 0
     lead_ids: list[UUID] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, int]:
-        return {"looked_at": self.looked_at, "leads": self.leads, "duplicates": self.duplicates, "ignored": self.ignored, "rejected": self.rejected, "errors": self.errors}
+        return {"looked_at": self.looked_at, "leads": self.leads, "duplicates": self.duplicates, "ignored": self.ignored, "rejected": self.rejected, "errors": self.errors, "replies": self.replies}
 
 
 def message_key(msg: EmailMessage, raw: bytes) -> str:
@@ -300,7 +330,7 @@ def process_message(conn: psycopg.Connection, raw: bytes, *, now: datetime | Non
         received_at = parsedate_to_datetime(msg["Date"]) if msg.get("Date") else None
     except (TypeError, ValueError):
         received_at = None
-    tenant, to_addr = tenant_for_recipients(conn, recipients_of(msg))
+    tenant, to_addr, lead = route_for_recipients(conn, recipients_of(msg))
 
     def record(status: str, tenant_id: UUID | None = None, lead_id: UUID | None = None, error: str | None = None) -> None:
         conn.execute(
@@ -312,6 +342,10 @@ def process_message(conn: psycopg.Connection, raw: bytes, *, now: datetime | Non
         record("ignored")
         return "ignored", None
     text, meta = body_text(msg)
+    if lead is not None:
+        status = lead_mail(conn, tenant, lead, msg, subject=subject, from_addr=from_addr, text=text, now=now)
+        record(status, tenant["id"], lead["id"])
+        return status, lead["id"]
     parsed = {**parse_fields(subject, text, exclude_emails=tuple(a for a in from_addr.split(", ") if a)), **meta}
     # Platforms usually set Reply-To to the person who filled in the form.
     reply_to = next((a for _, a in getaddresses([str(msg.get("Reply-To") or "")]) if a), "")
@@ -329,6 +363,61 @@ def process_message(conn: psycopg.Connection, raw: bytes, *, now: datetime | Non
     record(status, tenant["id"], result.lead_id)
     log.info("email intake %s ref=%s created=%s from %s", tenant["slug"], result.ref_code, result.created, from_addr)
     return status, result.lead_id
+
+
+def lead_mail(conn: psycopg.Connection, tenant: dict, lead: dict, msg: EmailMessage, *, subject: str, from_addr: str, text: str, now: datetime) -> str:
+    """Mail to a lead's own address. Three cases:
+      * the lead (or anyone who isn't the client) wrote: a reply, attached to the lead and alerted;
+      * the client BCC'd us on an email they sent the lead from their own mail app: kept as the sent email;
+      * the client answered our alert from their inbox (only the lead address in To): relayed on to the lead.
+    Returns the inbound_email status: reply | sent_copy | relayed | closed_reply."""
+    from app.services import followup, messaging
+    from app.services import leads as lead_svc
+
+    sender = from_addr.split(", ")[0].lower()
+    user = conn.execute("SELECT * FROM app_user WHERE tenant_id = %s AND email_lower = %s AND is_active", (tenant["id"], sender)).fetchone()
+    own_domain = (get_settings().email_from or "@").lower().split("@", 1)[1]
+    if user is None and sender.endswith("@" + own_domain):
+        user = conn.execute("SELECT * FROM app_user WHERE tenant_id = %s AND role = 'owner' AND is_active ORDER BY created_at LIMIT 1", (tenant["id"],)).fetchone()
+    body = reply_text(text)[:BODY_KEEP]
+    if user is None:
+        # The lead replied.
+        followup.on_lead_replied(conn, tenant, lead, body or "(empty message)", now=now, channel="email", subject=subject)
+        return "reply"
+    # The client wrote. Was the lead already a recipient (a BCC copy), or is this an answer to our alert?
+    to_cc = {a.lower() for h in ("To", "Cc") for _, a in getaddresses([str(v) for v in msg.get_all(h, [])]) if a}
+    lead_email = (lead.get("email") or "").lower()
+    if lead_email and lead_email in to_cc:
+        _log_sent_email(conn, tenant, lead, user, subject, body, via="copy", now=now)
+        return "sent_copy"
+    if not lead_email:
+        lead_svc.add_note(conn, lead, f"Email from {user['name']} could not be sent: the lead has no email address.\n\n{body}", actor_id=user["id"], actor_label=user["name"])
+        return "sent_copy"
+    result = messaging.send_email(
+        conn, to=lead_email, subject=subject or f"Re: your request to {tenant['name']}", text=body, html=None, kind="lead_email",
+        tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reply_to=lead_address(tenant, lead), from_name=f"{user['name'].split(' ')[0]} at {tenant['name']}",
+    )
+    _log_sent_email(conn, tenant, lead, user, subject, body, via="inbox", now=now, delivered=result.ok, error=result.error)
+    return "relayed"
+
+
+def _log_sent_email(conn: psycopg.Connection, tenant: dict, lead: dict, user: dict, subject: str, body: str, *, via: str, now: datetime, delivered: bool = True, error: str | None = None) -> None:
+    """An email the client sent the lead. If the Email button logged a bare attempt a few minutes ago, fill
+    that in rather than adding a second line."""
+    from app.models import ActivityType
+    from app.services import leads as lead_svc
+
+    recent = conn.execute(
+        "SELECT id FROM activity WHERE lead_id = %s AND type = 'email_sent' AND body IS NULL AND occurred_at > %s ORDER BY occurred_at DESC LIMIT 1",
+        (lead["id"], now - timedelta(hours=2)),
+    ).fetchone()
+    detail = {"kind": "lead_email", "via": via, "subject": subject[:300], "delivered": delivered, "error": error}
+    if recent is not None:
+        from psycopg.types.json import Jsonb
+
+        conn.execute("UPDATE activity SET body = %s, detail = detail || %s WHERE id = %s", (body, Jsonb(detail), recent["id"]))
+        return
+    lead_svc.log_touch(conn, lead, ActivityType.EMAIL_SENT, actor_id=user["id"], actor_label=user["name"], note=body, now=now, detail=detail)
 
 
 def poll(*, now: datetime | None = None, mailbox: Mailbox | None = None) -> PollResult:
@@ -361,6 +450,9 @@ def poll(*, now: datetime | None = None, mailbox: Mailbox | None = None) -> Poll
                 res.rejected += 1
             elif status == "ignored":
                 res.ignored += 1
+            elif status in ("reply", "relayed", "sent_copy"):
+                res.lead_ids.append(lead_id)
+                res.replies += 1
     finally:
         box.close()
     return res

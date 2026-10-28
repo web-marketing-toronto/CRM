@@ -462,7 +462,7 @@ class DispatchStats:
     escalations: int = 0
 
 
-def _send_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict, reminder_id: UUID, kind: str, sms: str, subject: str, text: str, html: str) -> bool:
+def _send_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict, reminder_id: UUID, kind: str, sms: str, subject: str, text: str, html: str, reply_to: str | None = None) -> bool:
     any_ok = False
     if user.get("notify_sms") and user.get("mobile_e164"):
         # Reminders to clients are the agency talking; they come from the agency number. The client's own
@@ -470,7 +470,7 @@ def _send_to_user(conn: psycopg.Connection, user: dict, tenant: dict, lead: dict
         r = messaging.send_sms(conn, to=user["mobile_e164"], body=sms, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id, from_=get_settings().twilio_agency_from)
         any_ok = any_ok or r.ok
     if user.get("notify_email") or (not any_ok and user.get("email")):
-        r = messaging.send_email(conn, to=user["email"], subject=subject, text=text, html=html, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id)
+        r = messaging.send_email(conn, to=user["email"], subject=subject, text=text, html=html, kind=kind, tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"], reminder_id=reminder_id, reply_to=reply_to)
         any_ok = any_ok or r.ok
     return any_ok
 
@@ -589,7 +589,12 @@ def dispatch_due(conn: psycopg.Connection, *, now: datetime | None = None, lead_
                 # and the reply comes straight back through the CRM to the lead.
                 sent_any = _relay_to_user(conn, user, tenant, lead, r["id"], payload.get("text", ""), subject, text, html) or sent_any
                 continue
-            sent_any = _send_to_user(conn, user, tenant, lead, r["id"], "alert" if rule in ("new_alert", "replied", "resubmit") else "reminder", sms, subject, text, html) or sent_any
+            reply_to = None
+            if rule in ("replied", "reply_nudge") and payload.get("channel") == "email":
+                from app.services import email_intake
+
+                reply_to = email_intake.lead_address(tenant, lead) if email_intake.enabled() else None  # answer from the inbox; it goes through the CRM to the lead
+            sent_any = _send_to_user(conn, user, tenant, lead, r["id"], "alert" if rule in ("new_alert", "replied", "resubmit") else "reminder", sms, subject, text, html, reply_to=reply_to) or sent_any
         conn.execute("UPDATE reminder SET sent_at = %s WHERE id = %s", (now, r["id"]))
         if rule in ("nudge", "cadence", "reply_nudge", "close_loop", "snoozed", "after_appointment", "next_step"):
             lead_svc.log_activity(conn, tenant["id"], lead["id"], ActivityType.REMINDER_SENT, body=subject, detail={"rule": rule, **payload, "delivered": sent_any}, occurred_at=now)

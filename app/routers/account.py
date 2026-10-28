@@ -44,7 +44,7 @@ def notifications(
     return RedirectResponse("/account?notice=Saved", status_code=303)
 
 
-EMAIL_CLIENTS = ("ask", "mailto", "gmail", "outlook")
+EMAIL_CLIENTS = ("ask", "here", "mailto", "gmail", "outlook")
 
 
 @router.post("/email-client", dependencies=[Depends(check_csrf)])

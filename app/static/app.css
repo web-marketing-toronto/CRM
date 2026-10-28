@@ -486,3 +486,6 @@ table.data.ads td { padding-top: 7px; padding-bottom: 7px; }
 .ad-strip:hover { text-decoration: none; border-color: var(--line-strong); }
 .ad-strip .ad-thumb { width: 48px; height: 48px; }
 .ad-strip .ad-name { font-size: 14px; }
+
+.email-form { flex-wrap: wrap; }
+.email-form input[name="subject"] { min-height: 40px; padding: 8px 10px; font-size: 14px; }

@@ -337,3 +337,102 @@ def test_reply_to_fills_in_a_missing_email(mail_on, make_tenant, admin_conn):
     m.set_content("Name: Pat Visitor\nPhone: 705 555 0100\nMessage: hello")
     assert email_intake.poll(mailbox=FakeMailbox([bytes(m)])).leads == 1
     assert admin_conn.execute("SELECT email FROM lead").fetchone()["email"] == "visitor@example.com"
+
+
+# --- Email conversations on a lead ----------------------------------------------------------------
+
+def _email_world(client, make_tenant, make_user, admin_conn):
+    t = make_tenant("roofco", name="North Ridge Roofing", business_hours={"start": "00:00", "end": "23:59", "days": [1, 2, 3, 4, 5, 6, 7]})
+    dan = make_user("dan@northridgeroofing.ca", tenant_id=t["id"], role="member", name="Dan Mercer", mobile="+17055551000")
+    admin_conn.execute("UPDATE tenant SET default_assignee_id = %s WHERE id = %s", (dan["id"], t["id"]))
+    t = admin_conn.execute("SELECT * FROM tenant WHERE id = %s", (t["id"],)).fetchone()
+    lead_id = client.post(f"/v1/intake/{t['slug']}/{t['intake_key']}", json={"name": "Karen Whitfield", "email": "karen.w@example.com", "phone": "7055550142", "job_type": "Roof replacement"}).json()["lead_id"]
+    lead = admin_conn.execute("SELECT * FROM lead WHERE id = %s", (lead_id,)).fetchone()
+    return t, dan, lead
+
+
+def _raw(to: str, subject: str, text: str, *, from_: str, mid: str, cc: str | None = None) -> bytes:
+    m = EmailMessage()
+    m["From"] = from_
+    m["To"] = to
+    if cc:
+        m["Cc"] = cc
+    m["Delivered-To"] = "crm@web-marketing-toronto.com"
+    m["Subject"] = subject
+    m["Message-ID"] = mid
+    m["Date"] = "Wed, 28 Oct 2026 14:40:00 -0400"
+    m.set_content(text)
+    return bytes(m)
+
+
+def test_email_from_the_app_is_tracked_and_the_reply_lands_on_the_lead(client, make_tenant, make_user, admin_conn, outbox, mail_on, login):
+    from tests.conftest import csrf_from
+
+    t, dan, lead = _email_world(client, make_tenant, make_user, admin_conn)
+    addr = email_intake.lead_address(t, lead)
+    assert addr == email_intake.address_for(t).replace("@", ".a001@")
+    login("dan@northridgeroofing.ca")
+    csrf = csrf_from(client)
+    html = client.get(f"/leads/{lead['id']}").text
+    assert 'id="email-box"' in html and "their reply shows up below and alerts you" in html
+    assert f"bcc={addr.replace('@', '%40').replace('+', '%2B')}" in html  # the Gmail/Outlook/mailto links keep a copy on the lead
+    outbox.clear()
+    r = client.post(f"/leads/{lead['id']}/email", data={"subject": "", "body": "Hi Karen, happy to come by Thursday. Does 2 pm work?", "csrf_token": csrf}, headers={"HX-Request": "true"})
+    assert r.status_code == 200 and "Emailed from the app" in r.text and "Does 2 pm work?" in r.text
+    sent = [m for m in outbox.email if m["to"] == "karen.w@example.com"]
+    assert len(sent) == 1 and sent[0]["reply_to"] == addr and sent[0]["from_name"] == "Dan at North Ridge Roofing" and sent[0]["subject"] == "North Ridge Roofing: your roof replacement"
+    row = admin_conn.execute("SELECT status, last_touch_at, first_contact_at FROM lead WHERE id = %s", (lead["id"],)).fetchone()
+    assert row["status"] == "contacted" and row["first_contact_at"] is not None
+
+    # Karen replies to that email: it goes to the lead's address, attaches as a reply, and Dan is alerted.
+    outbox.clear()
+    box = FakeMailbox([_raw(addr, "Re: North Ridge Roofing: your roof replacement", "Thursday at 2 is perfect, see you then!\n\nOn Wed, Oct 28, 2026 Dan at North Ridge Roofing wrote:\n> Hi Karen, happy to come by Thursday.", from_="Karen Whitfield <karen.w@example.com>", mid="<r1@gmail>")])
+    res = email_intake.poll(mailbox=box)
+    assert res.replies == 1 and res.leads == 0
+    act = admin_conn.execute("SELECT body, detail FROM activity WHERE lead_id = %s AND type = 'lead_replied'", (lead["id"],)).fetchone()
+    assert act["body"] == "Thursday at 2 is perfect, see you then!" and act["detail"]["channel"] == "email"
+    from app.services import worker
+
+    worker.dispatch_lead_now(lead["id"])
+    alert_sms = [m for m in outbox.sms if m["to"] == "+17055551000"]
+    assert alert_sms and alert_sms[0]["body"].startswith('Karen Whitfield (A001), Roof replacement replied by email: "Thursday at 2 is perfect') and "/go/" in alert_sms[0]["body"]
+    alert_mail = [m for m in outbox.email if m["to"] == "dan@northridgeroofing.ca"]
+    assert alert_mail and alert_mail[0]["reply_to"] == addr  # answer from the inbox and it goes through the CRM
+    html = client.get(f"/leads/{lead['id']}").text
+    assert "They replied by email" in html and "Thursday at 2 is perfect" in html
+
+    # Dan answers that alert from his inbox: only the lead address is in To, so it is relayed on to Karen.
+    outbox.clear()
+    box = FakeMailbox([_raw(addr, "Re: Karen Whitfield (A001), Roof replacement replied by email", "Great, see you Thursday.\n\nOn Wed, Oct 28 the CRM wrote:\n> Karen Whitfield just replied", from_="Dan Mercer <dan@northridgeroofing.ca>", mid="<r2@gmail>")])
+    res = email_intake.poll(mailbox=box)
+    assert res.replies == 1
+    relayed = [m for m in outbox.email if m["to"] == "karen.w@example.com"]
+    assert len(relayed) == 1 and relayed[0]["text"] == "Great, see you Thursday." and relayed[0]["reply_to"] == addr and relayed[0]["from_name"] == "Dan at North Ridge Roofing"
+    assert admin_conn.execute("SELECT count(*) AS n FROM activity WHERE lead_id = %s AND type = 'email_sent' AND detail->>'via' = 'inbox'", (lead["id"],)).fetchone()["n"] == 1
+
+
+def test_bcc_copy_from_a_mail_app_fills_in_the_logged_attempt(client, make_tenant, make_user, admin_conn, outbox, mail_on, login):
+    from tests.conftest import csrf_from
+
+    t, dan, lead = _email_world(client, make_tenant, make_user, admin_conn)
+    addr = email_intake.lead_address(t, lead)
+    login("dan@northridgeroofing.ca")
+    csrf = csrf_from(client)
+    # Tapping the Email button logs a bare attempt; the BCC copy that arrives a minute later fills it in.
+    client.post(f"/leads/{lead['id']}/touch", data={"type": "email", "csrf_token": csrf}, headers={"HX-Request": "true"})
+    outbox.clear()
+    box = FakeMailbox([_raw("Karen Whitfield <karen.w@example.com>", "North Ridge Roofing: your roof replacement", "Hi Karen, thanks for reaching out. When suits you?", from_="Dan Mercer <dan@northridgeroofing.ca>", mid="<c1@gmail>", cc=None)])
+    # The BCC does not show in To/Cc; Delivered-To carries the lead address.
+    raw = box.messages[b"1"].replace(b"Delivered-To: crm@web-marketing-toronto.com", f"Delivered-To: {addr}".encode())
+    box.messages[b"1"] = raw
+    res = email_intake.poll(mailbox=box)
+    assert res.replies == 1 and not [m for m in outbox.email if m["to"] == "karen.w@example.com"]  # kept, not re-sent
+    rows = admin_conn.execute("SELECT body, detail FROM activity WHERE lead_id = %s AND type = 'email_sent' ORDER BY id", (lead["id"],)).fetchall()
+    assert len(rows) == 1 and rows[0]["body"] == "Hi Karen, thanks for reaching out. When suits you?" and rows[0]["detail"]["via"] == "copy"
+
+
+def test_reply_text_strips_the_quoted_message():
+    assert email_intake.reply_text("Yes please\n\nOn Tue, Oct 27, 2026 at 9:00 AM Dan wrote:\n> original") == "Yes please"
+    assert email_intake.reply_text("Sure.\n> quoted line\n> more\nthanks") == "Sure.\nthanks"
+    assert email_intake.reply_text("Ok\n\nSent from my iPhone") == "Ok"
+    assert email_intake.reply_text("-----Original Message-----\nFrom: x") == ""

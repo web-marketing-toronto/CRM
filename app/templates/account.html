@@ -34,6 +34,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <p class="muted" style="font-size:14px;margin-bottom:10px">What the <strong>Email</strong> button on a lead opens.</p>
   {% set ec = principal.user.email_client or 'ask' %}
+  <label class="check"><input type="radio" name="email_client" value="here" {{ 'checked' if ec == 'here' else '' }}> Send from the CRM <span class="dim">(their reply lands on the lead and alerts you)</span></label>
   <label class="check"><input type="radio" name="email_client" value="gmail" {{ 'checked' if ec == 'gmail' else '' }}> Gmail in the browser <span class="dim">(Google Workspace)</span></label>
   <label class="check"><input type="radio" name="email_client" value="outlook" {{ 'checked' if ec == 'outlook' else '' }}> Outlook on the web <span class="dim">(Microsoft 365)</span></label>
   <label class="check"><input type="radio" name="email_client" value="mailto" {{ 'checked' if ec == 'mailto' else '' }}> The mail app on this device <span class="dim">(whatever opens mailto: links)</span></label>

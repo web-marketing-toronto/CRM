@@ -322,6 +322,30 @@ def set_appointment(conn: psycopg.Connection, tenant: dict, lead: dict, when: da
     return f"{what} {pretty}."
 
 
+def send_lead_email(conn: psycopg.Connection, tenant: dict, lead: dict, subject: str, body: str, *, user: dict, actor_label: str, now: datetime | None = None) -> messaging.SendResult:
+    """An email typed in the app. Goes out from the CRM mailbox as 'Dan at North Ridge Roofing' with the lead's
+    own CRM address as Reply-To, so the reply lands on the lead and alerts the client."""
+    from app.services import email_intake
+
+    now = now or datetime.now(UTC)
+    if not lead.get("email"):
+        raise lead_svc.LeadError("This lead has no email address")
+    subject, body = (subject or "").strip(), (body or "").strip()
+    if not body:
+        raise lead_svc.LeadError("Write something first")
+    if not subject:
+        subject = f"{tenant['name']}: your {(lead.get('job_type') or 'request').lower()}"
+    reply_to = email_intake.lead_address(tenant, lead) if email_intake.enabled() else _reply_to(conn, tenant)
+    result = messaging.send_email(
+        conn, to=lead["email"], subject=subject[:300], text=body, html=None, kind="lead_email", tenant_id=tenant["id"], lead_id=lead["id"], user_id=user["id"],
+        reply_to=reply_to, from_name=f"{user['name'].split(' ')[0]} at {tenant['name']}",
+    )
+    if not result.ok:
+        raise lead_svc.LeadError(f"Not sent: {result.error or 'email provider error'}")
+    lead_svc.log_touch(conn, lead, ActivityType.EMAIL_SENT, actor_id=user["id"], actor_label=actor_label, note=body, now=now, detail={"kind": "lead_email", "via": "app", "subject": subject[:300], "delivered": True, "tracked": reply_to is not None and "+" in (reply_to or "")})
+    return result
+
+
 def connect_token(lead_id: UUID, user_id: UUID) -> str:
     from app.auth import crypto
 
