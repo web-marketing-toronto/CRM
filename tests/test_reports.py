@@ -39,7 +39,8 @@ def world(client, make_tenant, make_user, admin_conn):
         svc.change_status(conn, svc.get_lead(conn, ids["g1"]), LeadStatus.WON, actor_id=None, actor_label="Pat", deal_value=Decimal("8500"))
         # g2: contacted after 3 hours, lost on price
         conn.execute("UPDATE lead SET first_contact_at = created_at + interval '3 hours', last_touch_at = created_at + interval '3 hours', status = 'contacted' WHERE id = %s", (ids["g2"],))
-        svc.log_activity(conn, t["id"], ids["g2"], ActivityType.CALL_ATTEMPT, actor_label="Pat")
+        g2 = svc.get_lead(conn, ids["g2"])
+        svc.log_activity(conn, t["id"], ids["g2"], ActivityType.CALL_ATTEMPT, actor_label="Pat", occurred_at=g2["created_at"] + timedelta(hours=3))
         svc.change_status(conn, svc.get_lead(conn, ids["g2"]), LeadStatus.LOST, actor_id=None, actor_label="Pat", lost_reason=svc.LostReason.PRICE)
         # g3: spam
         svc.change_status(conn, svc.get_lead(conn, ids["g3"]), LeadStatus.LOST, actor_id=None, actor_label="Pat", lost_reason=svc.LostReason.SPAM)

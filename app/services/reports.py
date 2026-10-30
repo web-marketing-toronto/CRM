@@ -301,14 +301,22 @@ def tenant_summary(conn: psycopg.Connection, tenant: dict, p: Period, *, now: da
         s.by_ad.sort(key=lambda x: (-x.leads, -x.revenue, x.platform, x.ad_id))
         s.by_ad = s.by_ad[:30]
 
-    # Speed to lead: minutes from arrival to the first logged touch; imports and calls that were answered on the
-    # spot are excluded (an answered call is instant by definition and would flatter the number).
+    # Speed to lead: minutes from arrival to the first touch the client made (a call, text or email they
+    # logged or sent). Calls the lead made that happened to be answered are contact, but not the client's
+    # response, so they don't count here; neither do imports.
     sp = conn.execute(
         f"""
-        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM (l.first_contact_at - l.created_at)) / 60) AS med,
-               count(*) FILTER (WHERE l.first_contact_at - l.created_at <= interval '1 hour') AS within_hour, count(*) AS n
-        FROM lead l WHERE {LEAD_FILTER} AND l.first_contact_at IS NOT NULL AND l.channel NOT IN ('import')
-          AND NOT (l.channel = 'call' AND l.first_contact_at - l.created_at < interval '2 minutes')
+        WITH first_touch AS (
+            SELECT a.lead_id, min(a.occurred_at) AS at
+            FROM activity a JOIN lead l ON l.id = a.lead_id
+            WHERE {LEAD_FILTER} AND a.type IN ('call_attempt', 'text_sent', 'email_sent')
+              AND coalesce(a.detail ->> 'kind', '') <> 'inbound_call' AND a.actor_label <> 'CallRail'
+            GROUP BY a.lead_id
+        )
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM (f.at - l.created_at)) / 60) AS med,
+               count(*) FILTER (WHERE f.at - l.created_at <= interval '1 hour') AS within_hour, count(*) AS n
+        FROM lead l JOIN first_touch f ON f.lead_id = l.id
+        WHERE {LEAD_FILTER} AND l.channel NOT IN ('import') AND f.at >= l.created_at
         """,
         params,
     ).fetchone()
