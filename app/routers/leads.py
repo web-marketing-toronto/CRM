@@ -347,7 +347,7 @@ def outcome(
         if outcome == "spoke" and not next_step.strip():
             # First tap: record that they spoke, then ask what's next.
             try:
-                outcomes.record(conn, tenant, lead, "spoke", actor_id=principal.user_id, actor_label=principal.label, next_step="call_back", at=at, note=note.strip() or None)
+                outcomes.record(conn, tenant, lead, "spoke", actor_id=principal.user_id, actor_label=principal.label, next_step="call_back", at=at, note=note.strip() or None, quiet_step=True)
             except svc.LeadError as exc:
                 return _respond(request, principal, lead_id, error=str(exc))
             background_dispatch(lead_id)

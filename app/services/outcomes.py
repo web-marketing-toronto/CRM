@@ -174,6 +174,7 @@ def record(
     conn: psycopg.Connection, tenant: dict, lead: dict, outcome: str, *,
     actor_id: UUID | None, actor_label: str, next_step: str | None = None, at: datetime | None = None,
     note: str | None = None, value: Decimal | None = None, lost_reason: LostReason | None = None, now: datetime | None = None,
+    quiet_step: bool = False,
 ) -> str:
     """Apply one outcome. Returns a short confirmation. May raise LeadError when something required is missing."""
     now = now or datetime.now(UTC)
@@ -214,7 +215,7 @@ def record(
         if not next_step:
             raise lead_svc.LeadError("What's next? Pick a next step so the lead doesn't go cold.")
         fresh = lead_svc.get_lead(conn, lid) or lead
-        return "Spoke to them. " + set_next_step(conn, tenant, fresh, next_step, at, actor_id=actor_id, actor_label=actor_label, note=note, now=now)
+        return "Spoke to them. " + set_next_step(conn, tenant, fresh, next_step, at, actor_id=actor_id, actor_label=actor_label, note=note, now=now, log=not quiet_step)
 
     # voicemail / no_answer / no_reply: keep trying, on a schedule the client can see.
     if status in (LeadStatus.NEW.value, LeadStatus.CONTACTED.value):
