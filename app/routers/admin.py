@@ -263,6 +263,29 @@ def parse_ads(form) -> dict:
     }
 
 
+@router.post("/tenants/{tenant_id}/meta/page", dependencies=[Depends(check_csrf)])
+async def meta_page(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
+    """Check or connect the client's Facebook Page for lead ads, using the Page id typed on the page."""
+    form = await request.form()
+    page_id = re.sub(r"\D", "", str(form.get("meta_page_id") or ""))
+    action = str(form.get("action") or "check")
+    ctx = _tenant_ctx(tenant_id)
+    if page_id:
+        ctx["meta_page_id"] = page_id
+    try:
+        if not page_id:
+            raise adplatforms.AdsError("Enter the client's Page id first", retryable=False)
+        result = adplatforms.meta_page_subscribe(page_id) if action == "subscribe" else adplatforms.meta_page_status(page_id)
+        result.pop("page_token", None)
+    except adplatforms.AdsError as exc:
+        return web.render(request, "admin/tenant.html", error=None, notice=None, new_user_password=None, meta_page={"ok": False, "error": str(exc)}, **ctx)
+    if action == "subscribe" and result.get("subscribed"):
+        with db(None, "agency_admin") as conn:
+            conn.execute("UPDATE tenant SET settings = settings || jsonb_build_object('meta', coalesce(settings -> 'meta', '{}'::jsonb) || jsonb_build_object('page_id', %s::text)) WHERE id = %s", (page_id, tenant_id))
+        ctx = _tenant_ctx(tenant_id)
+    return web.render(request, "admin/tenant.html", error=None, notice=None, new_user_password=None, meta_page={"ok": True, **result}, **ctx)
+
+
 @router.post("/tenants/{tenant_id}/google-ads/check", dependencies=[Depends(check_csrf)])
 async def google_ads_check(request: Request, tenant_id: UUID, principal: Annotated[Principal, Depends(require_agency)]):
     """Prove the Google Ads hookup for this client with the ids typed on the page (nothing is saved or sent)."""

@@ -581,3 +581,57 @@ def meta_ad(ad_id: str) -> dict[str, Any] | None:
         "headline": cr.get("title") or link.get("name") or video.get("title"), "body": cr.get("body") or link.get("message") or video.get("message"),
         "link_url": link_url, "image_url": cr.get("image_url") or link.get("picture") or video.get("image_url") or cr.get("thumbnail_url"), "kind": None,
     }
+
+
+# --- Meta lead-ads page subscription -------------------------------------------------------------
+
+def meta_page_status(page_id: str) -> dict[str, Any]:
+    """Is this Page wired for lead ads: can the token see it, is the app subscribed to its leadgen field?"""
+    s = get_settings()
+    page_id = re.sub(r"\D", "", page_id or "")
+    if s.ads_provider == "fake":
+        return outbox.fake_check or {"page": {"id": page_id, "name": "Fake Page"}, "subscribed": False, "fields": []}
+    if not s.meta_access_token:
+        raise AdsError("Meta access token is not configured", retryable=False)
+    if not page_id:
+        raise AdsError("Enter the client's Page id first", retryable=False)
+    try:
+        r = httpx.get(f"{GRAPH}/{page_id}", params={"access_token": s.meta_access_token, "fields": "id,name,access_token"}, timeout=30)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Meta unreachable: {exc}") from exc
+    if r.status_code >= 300:
+        raise AdsError(_meta_error(r, "The token can't see this Page. Add the Page to the system user's assets in Business Settings (with full control), then try again"), retryable=False)
+    page = r.json()
+    page_token = page.get("access_token")
+    if not page_token:
+        raise AdsError("The token can see the Page but has no Page access: give the system user the Page in Business Settings → System users → Assign assets → Pages", retryable=False)
+    r = httpx.get(f"{GRAPH}/{page_id}/subscribed_apps", params={"access_token": page_token}, timeout=30)
+    if r.status_code >= 300:
+        raise AdsError(_meta_error(r, "Could not read the Page's app subscriptions"), retryable=False)
+    apps = r.json().get("data", [])
+    fields = [f for a in apps for f in (a.get("subscribed_fields") or [])]
+    return {"page": {"id": page.get("id"), "name": page.get("name")}, "subscribed": "leadgen" in fields, "fields": sorted(set(fields)), "page_token": page_token}
+
+
+def meta_page_subscribe(page_id: str) -> dict[str, Any]:
+    """Subscribe the CRM's app to the Page's leadgen events (what Meta calls connecting the Page to the app)."""
+    s = get_settings()
+    if s.ads_provider == "fake":
+        outbox.meta_events.append({"subscribe": page_id})
+        return {"page": {"id": page_id, "name": "Fake Page"}, "subscribed": True, "fields": ["leadgen"]}
+    status = meta_page_status(page_id)
+    r = httpx.post(f"{GRAPH}/{status['page']['id']}/subscribed_apps", params={"access_token": status["page_token"], "subscribed_fields": "leadgen"}, timeout=30)
+    if r.status_code >= 300:
+        raise AdsError(_meta_error(r, "Meta refused the subscription"), retryable=False)
+    status = meta_page_status(page_id)
+    status.pop("page_token", None)
+    return status
+
+
+def _meta_error(r: httpx.Response, fallback: str) -> str:
+    try:
+        err = r.json().get("error", {})
+        msg = err.get("message") or ""
+    except ValueError:
+        msg = r.text[:200]
+    return f"{fallback}: {msg}" if msg else fallback

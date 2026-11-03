@@ -201,10 +201,12 @@ With any of them the From address is `EMAIL_FROM` (default `leads@web-marketing-
    you chose), `crm-meta-access-token` (Business Settings → System users → generate a token with
    `leads_retrieval`, `pages_manage_ads`, `pages_read_engagement`, `pages_show_list`, `ads_management`; add
    each client Page and ad account to the system user's assets). Redeploy, then complete step 1.
-3. Per client: subscribe their Page to the app (`POST /{page-id}/subscribed_apps?subscribed_fields=leadgen`
-   with the Page token, or via Leads Access Manager), then on their settings page enter the Page id, the
-   dataset (pixel) id and the ad account id. Test with Meta's Lead Ads Testing Tool; test the Conversions
-   API with a test event code from Events Manager → Test events (clear it when live).
+3. Per client: in Business Settings → System users → the CRM's system user → Assign assets → Pages, add the
+   client's Page (full control). Then on the client's page in the CRM, Meta lead ads → type the Page id →
+   **Connect for lead ads**: the CRM subscribes the Page's lead forms to the app and saves the Page id.
+   Enter the dataset (pixel) id and ad account id under Settings as well. Test with Meta's Lead Ads Testing
+   Tool; test the Conversions API with a test event code from Events Manager → Test events (clear it when
+   live).
 4. Events Manager → the dataset → map the custom events `Qualified` and `Converted` to funnel stages so
    campaigns can optimize for Conversion Leads once the integration shows healthy for a few weeks.
 

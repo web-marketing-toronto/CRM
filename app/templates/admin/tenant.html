@@ -96,9 +96,23 @@
       <summary style="cursor:pointer;font-weight:600;font-size:14px">Meta (Facebook / Instagram) lead ads</summary>
       {% if meta_configured %}
       <p style="margin-top:10px;font-size:14px">One webhook serves every client; the Page id tells them apart. In the Meta app (Business settings → the WMT CRM app → Webhooks → Page), the callback is <code style="user-select:all">{{ meta_webhook_url }}</code> with the verify token from Secret Manager, subscribed to the <strong>leadgen</strong> field. Then, for this client: add their Page to the system user's assets with <em>leads access</em>, subscribe the Page to the app (<em>Leads Access Manager</em> → assign the CRM), and enter the Page id below under Settings. Instant-form answers are fetched from the Graph API the moment the lead comes in; the standard questions (name, phone, email, address) are recognised, custom questions go through the field map.</p>
-      <p style="font-size:14px">Page id for this client: <strong>{{ meta_page_id or 'not set' }}</strong>. Test with Meta's <em>Lead Ads Testing Tool</em> (business.facebook.com/ads/lead_gen/tool_testing).</p>
+      <form method="post" action="/admin/tenants/{{ tenant.id }}/meta/page" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="meta_page_check" style="font-size:14px;font-weight:600">Page id</label>
+        <input id="meta_page_check" name="meta_page_id" type="text" inputmode="numeric" value="{{ meta_page_id }}" placeholder="1234567890" style="min-height:38px;padding:6px 10px;width:180px">
+        <button class="btn ghost small" type="submit" name="action" value="check">Check</button>
+        <button class="btn small" type="submit" name="action" value="subscribe">Connect for lead ads</button>
+      </form>
+      {% if meta_page %}
+      <div class="gcheck {{ 'ok' if meta_page.ok and meta_page.subscribed else 'bad' }}">
+        {% if not meta_page.ok %}<strong>Not connected.</strong> {{ meta_page.error }}
+        {% elif meta_page.subscribed %}<strong>Connected.</strong> {{ meta_page.page.name }} ({{ meta_page.page.id }}) sends lead-form leads to the CRM. Page id saved. Test with Meta's Lead Ads Testing Tool.
+        {% else %}<strong>Seen, not connected.</strong> The token can see {{ meta_page.page.name }} ({{ meta_page.page.id }}) but the CRM isn't subscribed to its lead forms yet. Press <em>Connect for lead ads</em>.{% endif %}
+      </div>
+      {% endif %}
+      <p style="font-size:14px"><strong>Before the button works:</strong> in Business Settings → System users → the CRM's system user → Assign assets → Pages, add this client's Page with full control. <em>Connect</em> then subscribes the Page's lead forms to the CRM and saves the Page id. Test with Meta's <em>Lead Ads Testing Tool</em> (business.facebook.com/ads/lead_gen/tool_testing): the test lead shows up here within seconds.</p>
       {% else %}
-      <p style="margin-top:10px;font-size:14px">Not configured yet on the server: it needs <code>crm-meta-app-secret</code>, <code>crm-meta-verify-token</code> and <code>crm-meta-access-token</code> in Secret Manager (see SETUP.md). Until then, Zapier's "Facebook Lead Ads → Webhooks by Zapier" into the intake URL above works, with <code>channel</code> set to <code>meta_lead_ad</code>.</p>
+      <p style="margin-top:10px;font-size:14px">Not configured yet on the server: the lead-ads webhook needs <code>crm-meta-app-secret</code> and <code>crm-meta-verify-token</code> in Secret Manager alongside the access token, then a deploy and the webhook registered in the Meta app (SETUP.md § Meta). Until then, Zapier's "Facebook Lead Ads → Webhooks by Zapier" into the intake URL above works, with <code>channel</code> set to <code>meta_lead_ad</code>.</p>
       {% endif %}
     </details>
     <form class="inline-form" method="post" action="/admin/tenants/{{ tenant.id }}/rotate-key" onsubmit="return confirm('Generate a new intake key? Every form posting to the old URL stops working until you update it.')" style="display:block;margin-top:12px">

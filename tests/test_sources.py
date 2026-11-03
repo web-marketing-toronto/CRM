@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from app import config
 from app.routers import sources
 
 
@@ -197,3 +198,32 @@ def test_google_lead_form_webhook(client, setup, admin_conn, outbox):
 def test_attribution_snippet_is_served(client):
     r = client.get("/static/wmt.js")
     assert r.status_code == 200 and "window.wmt" in r.text and "gclid" in r.text and "form_fields" in r.text
+
+
+def test_admin_can_check_and_connect_a_meta_page(client, make_tenant, make_user, admin_conn, monkeypatch):
+    import re
+
+    import pyotp
+
+    from app.auth import crypto
+    from app.services import adplatforms
+
+    t = make_tenant("roofco", name="North Ridge Roofing")
+    u = make_user("boss@agency.test", role="agency_admin", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), u["id"]))
+    client.post("/login", data={"email": "boss@agency.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    s = config.get_settings()
+    monkeypatch.setattr(s, "meta_app_secret", "x")
+    monkeypatch.setattr(s, "meta_access_token", "y")
+    r = client.post(f"/admin/tenants/{t['id']}/meta/page", data={"meta_page_id": "123456", "action": "check", "csrf_token": csrf})
+    assert r.status_code == 200 and "Seen, not connected" in r.text and "Fake Page (123456)" in r.text
+    r = client.post(f"/admin/tenants/{t['id']}/meta/page", data={"meta_page_id": "123456", "action": "subscribe", "csrf_token": csrf})
+    assert r.status_code == 200 and "<strong>Connected.</strong> Fake Page (123456)" in r.text
+    assert adplatforms.outbox.meta_events[-1] == {"subscribe": "123456"}
+    assert admin_conn.execute("SELECT settings -> 'meta' ->> 'page_id' AS p FROM tenant WHERE id = %s", (t["id"],)).fetchone()["p"] == "123456"
+    r = client.post(f"/admin/tenants/{t['id']}/meta/page", data={"meta_page_id": "", "action": "check", "csrf_token": csrf})
+    assert "Enter the client&#39;s Page id first" in r.text
