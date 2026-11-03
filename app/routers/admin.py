@@ -484,6 +484,40 @@ def user_create(
     return web.render(request, "admin/tenant.html", error=None, notice=f"Login created for {email.strip()}. Give them this temporary password now; it is not shown again.", new_user_password=temp_password, **_tenant_ctx(tenant_id))
 
 
+@router.post("/users/{user_id}/edit", dependencies=[Depends(check_csrf)])
+def user_edit(
+    request: Request, user_id: UUID, principal: Annotated[Principal, Depends(require_agency)],
+    name: Annotated[str, Form()], email: Annotated[str, Form()], mobile: Annotated[str, Form()] = "", role: Annotated[str, Form()] = "",
+    notify_sms: Annotated[str, Form()] = "", notify_email: Annotated[str, Form()] = "", see_all_leads: Annotated[str, Form()] = "",
+):
+    """Name, email, mobile, role and alert settings for a login (client users and agency staff alike)."""
+    with db(None, "agency_admin") as conn:
+        user = conn.execute("SELECT * FROM app_user WHERE id = %s", (user_id,)).fetchone()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        try:
+            name, email = name.strip(), email.strip()
+            if not name or "@" not in email:
+                raise AuthError("Name and a valid email are required.")
+            if conn.execute("SELECT 1 FROM app_user WHERE email_lower = lower(%s) AND id <> %s", (email, user_id)).fetchone():
+                raise AuthError("That email already has a login.")
+            mobile_e164 = normalize_phone(mobile) if mobile.strip() else None
+            if mobile.strip() and not mobile_e164:
+                raise AuthError("That mobile number doesn't look right.")
+            new_role = Role(role) if role else Role(user["role"])
+            if (new_role == Role.AGENCY_ADMIN) != (user["role"] == Role.AGENCY_ADMIN.value):
+                raise AuthError("A login can't move between a client and the agency.")
+            changed = {k: (user[k], v) for k, v in (("name", name), ("email", email), ("mobile_e164", mobile_e164), ("role", new_role.value)) if user[k] != v}
+            conn.execute(
+                "UPDATE app_user SET name = %s, email = %s, mobile_e164 = %s, role = %s, notify_sms = %s, notify_email = %s, see_all_leads = %s WHERE id = %s",
+                (name, email, mobile_e164, new_role.value, notify_sms == "on", notify_email == "on", see_all_leads == "on" or new_role == Role.OWNER, user_id),
+            )
+            auth_service.audit(conn, action="user_edited", user_id=principal.user_id, tenant_id=user["tenant_id"], target_type="user", target_id=str(user_id), detail={k: list(v) for k, v in changed.items()})
+        except (AuthError, ValueError) as exc:
+            return _render_users_page(request, user, notice=None, error=str(exc), status_code=400)
+    return _render_users_page(request, user, notice=f"Saved {name}.")
+
+
 def _users_page(user: dict) -> str:
     """Where a user is managed: their client's settings page, or the Team page for agency staff."""
     return f"/admin/tenants/{user['tenant_id']}" if user.get("tenant_id") else "/admin/team"

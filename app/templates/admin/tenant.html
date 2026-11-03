@@ -129,7 +129,24 @@
         <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-password" onsubmit="return confirm('Set a temporary password for {{ u.name }}? Their current sessions end.')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Reset password</button></form>
         {% if u.totp_enabled %}<form class="inline-form" method="post" action="/admin/users/{{ u.id }}/reset-mfa" onsubmit="return confirm('Clear the authenticator for {{ u.name }}?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">Clear authenticator</button></form>{% endif %}
         <form class="inline-form" method="post" action="/admin/users/{{ u.id }}/toggle-active"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn ghost small" type="submit">{{ 'Enable' if not u.is_active else 'Disable' }}</button></form>
+        <button class="btn ghost small" type="button" onclick="var f=document.getElementById('edit-{{ u.id }}'); f.style.display = f.style.display === 'none' ? 'block' : 'none'; if (f.style.display === 'block') f.querySelector('input').focus();">Edit</button>
       </div>
+      <form id="edit-{{ u.id }}" class="user-edit" method="post" action="/admin/users/{{ u.id }}/edit" style="display:none;grid-column:1 / -1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="grid-2">
+          <div class="field"><label for="e_name_{{ u.id }}">Name</label><input id="e_name_{{ u.id }}" name="name" type="text" value="{{ u.name }}" required></div>
+          <div class="field"><label for="e_email_{{ u.id }}">Email (their login)</label><input id="e_email_{{ u.id }}" name="email" type="email" value="{{ u.email }}" required></div>
+          <div class="field"><label for="e_mobile_{{ u.id }}">Mobile (for text alerts)</label><input id="e_mobile_{{ u.id }}" name="mobile" type="tel" value="{{ u.mobile_e164 or '' }}"></div>
+          <div class="field"><label for="e_role_{{ u.id }}">Role</label><select id="e_role_{{ u.id }}" name="role"><option value="owner" {{ 'selected' if u.role == 'owner' else '' }}>Owner (settings and all leads)</option><option value="member" {{ 'selected' if u.role == 'member' else '' }}>Member (works leads)</option></select></div>
+        </div>
+        <div class="days" style="margin:6px 0 10px">
+          <label class="day"><input type="checkbox" name="notify_sms" {{ 'checked' if u.notify_sms else '' }}> Text alerts</label>
+          <label class="day"><input type="checkbox" name="notify_email" {{ 'checked' if u.notify_email else '' }}> Email alerts</label>
+          <label class="day"><input type="checkbox" name="see_all_leads" {{ 'checked' if u.see_all_leads else '' }}> Sees every lead (unticked: only leads assigned to them; owners always see all)</label>
+        </div>
+        <button class="btn small" type="submit">Save</button>
+        <button class="btn ghost small" type="button" onclick="document.getElementById('edit-{{ u.id }}').style.display='none'">Cancel</button>
+      </form>
     </div>
     {% else %}
     <p class="muted">No logins yet. Add the owner first; they become the default assignee.</p>

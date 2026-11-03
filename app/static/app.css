@@ -489,3 +489,4 @@ table.data.ads td { padding-top: 7px; padding-bottom: 7px; }
 
 .email-form { flex-wrap: wrap; }
 .email-form input[name="subject"] { min-height: 40px; padding: 8px 10px; font-size: 14px; }
+.user-edit { margin-top: 8px; padding: 12px; background: var(--paper); border-radius: var(--radius); }

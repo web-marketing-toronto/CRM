@@ -227,3 +227,31 @@ def test_admin_can_check_and_connect_a_meta_page(client, make_tenant, make_user,
     assert admin_conn.execute("SELECT settings -> 'meta' ->> 'page_id' AS p FROM tenant WHERE id = %s", (t["id"],)).fetchone()["p"] == "123456"
     r = client.post(f"/admin/tenants/{t['id']}/meta/page", data={"meta_page_id": "", "action": "check", "csrf_token": csrf})
     assert "Enter the client&#39;s Page id first" in r.text
+
+
+def test_agency_can_edit_a_client_login(client, make_tenant, make_user, admin_conn):
+    import re
+
+    import pyotp
+
+    from app.auth import crypto
+
+    t = make_tenant("roofco", name="North Ridge Roofing")
+    pat = make_user("pat@roofco.test", tenant_id=t["id"], role="member", name="Pat")
+    u = make_user("boss@agency.test", role="agency_admin", totp_enabled=True)
+    secret = crypto.new_totp_secret()
+    admin_conn.execute("UPDATE app_user SET totp_secret_enc = %s WHERE id = %s", (crypto.encrypt_secret(secret), u["id"]))
+    client.post("/login", data={"email": "boss@agency.test", "password": "correct-horse-battery"})
+    page = client.get("/login/mfa")
+    csrf = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text).group(1)
+    client.post("/login/mfa", data={"code": pyotp.TOTP(secret).now(), "csrf_token": csrf})
+    html = client.get(f"/admin/tenants/{t['id']}").text
+    assert f'id="edit-{pat["id"]}"' in html and 'value="pat@roofco.test"' in html
+    r = client.post(f"/admin/users/{pat['id']}/edit", data={"name": "Pat Lee", "email": "pat.lee@roofco.test", "mobile": "705 555 0199", "role": "owner", "notify_sms": "on", "csrf_token": csrf})
+    assert r.status_code == 200 and "Saved Pat Lee." in r.text
+    row = admin_conn.execute("SELECT name, email, mobile_e164, role, notify_sms, notify_email, see_all_leads FROM app_user WHERE id = %s", (pat["id"],)).fetchone()
+    assert row == {"name": "Pat Lee", "email": "pat.lee@roofco.test", "mobile_e164": "+17055550199", "role": "owner", "notify_sms": True, "notify_email": False, "see_all_leads": True}
+    r = client.post(f"/admin/users/{pat['id']}/edit", data={"name": "Pat Lee", "email": "boss@agency.test", "csrf_token": csrf})
+    assert r.status_code == 400 and "already has a login" in r.text
+    r = client.post(f"/admin/users/{pat['id']}/edit", data={"name": "Pat Lee", "email": "pat.lee@roofco.test", "mobile": "12", "csrf_token": csrf})
+    assert r.status_code == 400 and "mobile number" in r.text
