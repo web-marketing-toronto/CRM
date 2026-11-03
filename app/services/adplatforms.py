@@ -37,6 +37,7 @@ def google_api() -> str:
         v = "v" + v
     return f"https://googleads.googleapis.com/{v}"
 GRAPH = "https://graph.facebook.com/v21.0"
+META_TIMEOUT = 12.0  # seconds per call; admin checks run inside a 60 s request
 
 
 class AdsError(Exception):
@@ -596,7 +597,9 @@ def meta_page_status(page_id: str) -> dict[str, Any]:
     if not page_id:
         raise AdsError("Enter the client's Page id first", retryable=False)
     try:
-        r = httpx.get(f"{GRAPH}/{page_id}", params={"access_token": s.meta_access_token, "fields": "id,name,access_token"}, timeout=30)
+        r = httpx.get(f"{GRAPH}/{page_id}", params={"access_token": s.meta_access_token, "fields": "id,name,access_token"}, timeout=META_TIMEOUT)
+    except httpx.TimeoutException as exc:
+        raise AdsError(f"Meta did not answer within {META_TIMEOUT:.0f} s (graph.facebook.com may be unreachable from the server)") from exc
     except httpx.HTTPError as exc:
         raise AdsError(f"Meta unreachable: {exc}") from exc
     if r.status_code >= 300:
@@ -605,7 +608,10 @@ def meta_page_status(page_id: str) -> dict[str, Any]:
     page_token = page.get("access_token")
     if not page_token:
         raise AdsError("The token can see the Page but has no Page access: give the system user the Page in Business Settings → System users → Assign assets → Pages", retryable=False)
-    r = httpx.get(f"{GRAPH}/{page_id}/subscribed_apps", params={"access_token": page_token}, timeout=30)
+    try:
+        r = httpx.get(f"{GRAPH}/{page_id}/subscribed_apps", params={"access_token": page_token}, timeout=META_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Meta unreachable: {exc}") from exc
     if r.status_code >= 300:
         raise AdsError(_meta_error(r, "Could not read the Page's app subscriptions"), retryable=False)
     apps = r.json().get("data", [])
@@ -620,7 +626,10 @@ def meta_page_subscribe(page_id: str) -> dict[str, Any]:
         outbox.meta_events.append({"subscribe": page_id})
         return {"page": {"id": page_id, "name": "Fake Page"}, "subscribed": True, "fields": ["leadgen"]}
     status = meta_page_status(page_id)
-    r = httpx.post(f"{GRAPH}/{status['page']['id']}/subscribed_apps", params={"access_token": status["page_token"], "subscribed_fields": "leadgen"}, timeout=30)
+    try:
+        r = httpx.post(f"{GRAPH}/{status['page']['id']}/subscribed_apps", params={"access_token": status["page_token"], "subscribed_fields": "leadgen"}, timeout=META_TIMEOUT)
+    except httpx.HTTPError as exc:
+        raise AdsError(f"Meta unreachable: {exc}") from exc
     if r.status_code >= 300:
         raise AdsError(_meta_error(r, "Meta refused the subscription"), retryable=False)
     status = meta_page_status(page_id)
